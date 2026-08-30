@@ -23,7 +23,6 @@ export function useSuggestions() {
 
 export function useProducts(kitchenId: string) {
   const queryClient = useQueryClient();
-  const setConnection = useUI((s) => s.setConnection);
   const isEcho = useUI((s) => s.isEcho);
 
   const query = useQuery({
@@ -42,9 +41,8 @@ export function useProducts(kitchenId: string) {
       if (isEcho(productId, updatedBy, repo.currentUserId())) return;
       void queryClient.invalidateQueries({ queryKey: qk.products(kitchenId) });
     });
-    setConnection('online');
     return unsubscribe;
-  }, [kitchenId, queryClient, isEcho, setConnection]);
+   }, [kitchenId, queryClient, isEcho]);
 
   return query;
 }
