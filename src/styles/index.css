@@ -1,0 +1,58 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Антиква для названий блюд. Проверена на кириллицу (D-027). */
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600&display=swap');
+
+/**
+ * Тёмная тема — единственная (D-022). Значения в формате «R G B»,
+ * чтобы Tailwind мог подмешивать прозрачность через bg-accent/70.
+ * Светлую тему можно добавить позже, не трогая компоненты.
+ */
+:root {
+  --bg:             0   0   0;
+  --surface:       26  25  25;   /* #1A1919 — плашки строк */
+  --surface-2:     20  20  20;   /* #141414 — панели, плитки без фото */
+  --line:          31  31  31;   /* разделители */
+  --text-primary: 255 255 255;
+  --text-muted:   110 110 110;
+  --text-dim:      92  92  92;
+  --accent:       213 255  64;   /* #D5FF40 */
+  --accent-track:  60  74  24;   /* дорожка ползунка во включённом состоянии */
+  --accent-ink:    18  32  10;   /* тёмное на лайме */
+  --danger:       255  69  58;
+  --warning:      255 159  10;
+}
+
+html, body, #root { height: 100%; }
+
+body {
+  margin: 0;
+  background: rgb(var(--bg));
+  color: rgb(var(--text-primary));
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: none;
+}
+
+.font-display { font-family: 'Playfair Display', Georgia, serif; }
+
+:focus-visible {
+  outline: 2px solid rgb(var(--accent));
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+* { -webkit-tap-highlight-color: transparent; }
+
+/* Горизонтальные ряды вкладок и фильтров скроллятся без видимой полосы. */
+.no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
