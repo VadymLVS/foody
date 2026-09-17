@@ -31,6 +31,8 @@ export interface Repo {
   listSuggestions(): Promise<Array<{ key: string; name: string; categoryKey: string | null; unit: Unit }>>;
 
   createProduct(kitchenId: string, input: NewProduct): Promise<Product>;
+  /** Пакетная вставка: наполнение кухни из карусели — это десятки позиций сразу. */
+  createProducts(kitchenId: string, inputs: NewProduct[]): Promise<number>;
   updateProduct(id: string, patch: ProductPatch): Promise<void>;
   softDeleteProduct(id: string): Promise<void>;
   restoreProduct(id: string): Promise<void>;

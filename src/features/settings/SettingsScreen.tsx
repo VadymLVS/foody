@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Check, ChevronRight, Plus, Users } from 'lucide-react';
-import { Button, Input, Modal, Toggle, useToast } from '@/shared/ui';
+import { Button, Input, Modal, Toggle, useToast, BottomNav } from '@/shared/ui';
 import { auth } from '@/shared/api';
 import { useSession } from '@/shared/hooks/useSession';
 import { useCurrentKitchen, useKitchenActions, useKitchens } from '@/shared/hooks/useKitchens';
@@ -137,6 +137,7 @@ export function SettingsScreen() {
           autoFocus
         />
       </Modal>
+      <BottomNav />
     </div>
   );
 }
@@ -144,7 +145,7 @@ export function SettingsScreen() {
 function Block({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="mb-6">
-      <h2 className="mb-2 px-1 text-small uppercase tracking-wide text-text-muted">{title}</h2>
+      <h2 className="mb-2 px-1 text-micro text-text-dim">{title}</h2>
       <div className="divide-y divide-line overflow-hidden rounded-md bg-surface">
         {children}
       </div>

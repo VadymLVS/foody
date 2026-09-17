@@ -12,40 +12,51 @@ interface Props {
 /**
  * Модал на мобильном приезжает снизу — так до кнопок дотягивается большой палец.
  * Escape закрывает, фокус уезжает внутрь, фон под модалом не скроллится.
+ *
+ * Эффекты разделены намеренно. Раньше фокус, блокировка прокрутки и обработчик
+ * клавиш жили в одном эффекте с зависимостью от onClose, а onClose приходит
+ * inline-функцией и пересоздаётся при каждой перерисовке. Из-за этого на каждое
+ * нажатие клавиши эффект перезапускался и снова выставлял фокус — причём
+ * querySelector отдавал первый элемент в порядке разметки, то есть кнопку
+ * закрытия. Поле теряло фокус, клавиатура на телефоне закрывалась, и вводить
+ * можно было по одной букве.
  */
 export function Modal({ open, title, onClose, children, footer }: Props) {
-  const panelRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
 
+  // Обработчик клавиш живёт отдельно: он и должен видеть свежий onClose
   useEffect(() => {
     if (!open) return;
-
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
     };
     document.addEventListener('keydown', onKey);
-
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-
-    panelRef.current?.querySelector<HTMLElement>('input, button, select')?.focus();
-
-    return () => {
-      document.removeEventListener('keydown', onKey);
-      document.body.style.overflow = previousOverflow;
-    };
+    return () => document.removeEventListener('keydown', onKey);
   }, [open, onClose]);
+
+  // Прокрутка фона — только на открытие и закрытие
+  useEffect(() => {
+    if (!open) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = previous; };
+  }, [open]);
+
+  // Фокус выставляется ровно один раз, и только на поле ввода, не на крестик
+  useEffect(() => {
+    if (!open) return;
+    const field = contentRef.current?.querySelector<HTMLElement>(
+      'input:not([type="checkbox"]), select, textarea',
+    );
+    field?.focus();
+  }, [open]);
 
   if (!open) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
+      <div className="absolute inset-0 bg-black/70" onClick={onClose} aria-hidden />
       <div
-        className="absolute inset-0 bg-black/70"
-        onClick={onClose}
-        aria-hidden
-      />
-      <div
-        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-label={title}
@@ -63,7 +74,7 @@ export function Modal({ open, title, onClose, children, footer }: Props) {
             <X className="h-5 w-5" />
           </button>
         </div>
-        <div className="space-y-4">{children}</div>
+        <div ref={contentRef} className="space-y-4">{children}</div>
         {footer && <div className="mt-6 flex gap-2">{footer}</div>}
       </div>
     </div>

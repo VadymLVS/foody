@@ -3,6 +3,7 @@ export { Toggle } from './Toggle';
 export { Input } from './Input';
 export { ProductRow, type PlanNeed } from './ProductRow';
 export { DishTile, type DishTileData } from './DishTile';
+export { SwipeDeck, type DeckItem } from './SwipeDeck';
 export { Medal } from './Medal';
 export { Tabs, FilterPills, type TabItem } from './Tabs';
 export { SearchField } from './SearchField';

@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Pencil, Trash2, PartyPopper, PackagePlus, SearchX, Receipt, CloudOff } from 'lucide-react';
+import { Pencil, Trash2, PartyPopper, PackagePlus, SearchX, Receipt, CloudOff, Sparkles } from 'lucide-react';
 import {
-  ActionSheet, Button, EmptyState, FilterPills, ProductRow, SearchField, Tabs, useToast,
-  type PlanNeed,
+  ActionSheet, BottomNav, Button, EmptyState, FilterPills, ProductRow, SearchField, Tabs,
+  useToast, type PlanNeed,
 } from '@/shared/ui';
 import { repo } from '@/shared/api';
+import { useNavigate } from 'react-router-dom';
 import { useCurrentKitchen } from '@/shared/hooks/useKitchens';
 import {
   useCategories, useDeleteProduct, usePendingCount, useProducts, useQueueFlusher,
@@ -26,6 +27,7 @@ export function ProductsScreen() {
   const kitchen = useCurrentKitchen();
   const kitchenId = kitchen?.id ?? '';
   const toast = useToast();
+  const navigate = useNavigate();
 
   const search = useUI((s) => s.search);
   const setSearch = useUI((s) => s.setSearch);
@@ -208,6 +210,25 @@ export function ProductsScreen() {
                 </Button>
               }
             />
+          ) : products.length === 0 ? (
+            /* Пустая кухня и «всё куплено» — разные вещи. Раньше при нуле
+               продуктов показывалось «Всё есть», и человек, зашедший впервые,
+               видел поздравление на пустом месте. */
+            <EmptyState
+              icon={<Sparkles className="h-12 w-12" />}
+              title={t('products.nothingYet')}
+              description={t('products.pickUsual')}
+              action={
+                <div className="flex flex-col items-center gap-2">
+                  <Button onClick={() => navigate('/products/quick-start')}>
+                    {t('products.quickStart')}
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => setAddOpen(true)}>
+                    {t('products.firstProduct')}
+                  </Button>
+                </div>
+              }
+            />
           ) : statusFilter === 'to-buy' ? (
             <EmptyState icon={<PartyPopper className="h-12 w-12" />} title={t('products.allSet')} />
           ) : (
@@ -228,6 +249,8 @@ export function ProductsScreen() {
           </section>
         ))}
       </main>
+
+      <BottomNav onAdd={() => setAddOpen(true)} />
 
       {receiptOpen && (
         <ReceiptImport kitchenId={kitchenId} onClose={() => setReceiptOpen(false)} />

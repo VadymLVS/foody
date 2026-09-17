@@ -1,7 +1,7 @@
 import { createBrowserRouter, Navigate, Outlet, useLocation } from 'react-router-dom';
-import { BottomNav } from '@/shared/ui';
 import { useSession } from '@/shared/hooks/useSession';
 import { ProductsScreen } from '@/features/products/ProductsScreen';
+import { QuickStartScreen } from '@/features/products/QuickStartScreen';
 import { DishesScreen } from '@/features/dishes/DishesScreen';
 import { SwipeScreen } from '@/features/swipe/SwipeScreen';
 import { SettingsScreen } from '@/features/settings/SettingsScreen';
@@ -26,12 +26,15 @@ function GuestOnly({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+/**
+ * Навигацию рисует сам экран: кнопке «+» нужно знать, что добавлять,
+ * а это у каждого раздела своё. Оболочка отвечает только за доступ.
+ */
 function AppShell() {
   return (
     <RequireAuth>
       <div className="min-h-full">
         <Outlet />
-        <BottomNav />
       </div>
     </RequireAuth>
   );
@@ -50,6 +53,7 @@ export const router = createBrowserRouter([
     ],
   },
   { path: '/today/choose', element: <RequireAuth><SwipeScreen /></RequireAuth> },
+  { path: '/products/quick-start', element: <RequireAuth><QuickStartScreen /></RequireAuth> },
   { path: '/settings/delete-account', element: <RequireAuth><DeleteAccountScreen /></RequireAuth> },
   { path: '/kitchens/:id', element: <RequireAuth><KitchenManageScreen /></RequireAuth> },
   { path: '*', element: <Navigate to="/products" replace /> },

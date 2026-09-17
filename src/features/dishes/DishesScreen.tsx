@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Soup, Salad, EggFried, CakeSlice, UtensilsCrossed, LayoutGrid, GalleryHorizontalEnd } from 'lucide-react';
-import { Button, DishTile, EmptyState, SearchField, Tabs, useToast } from '@/shared/ui';
+import { Button, DishTile, EmptyState, SearchField, Tabs, useToast, BottomNav } from '@/shared/ui';
 import { useCurrentKitchen } from '@/shared/hooks/useKitchens';
 import { useDishes, usePlanActions } from '@/shared/hooks/useDishes';
 import { useCategories, useToggleProduct } from '@/shared/hooks/useProducts';
@@ -132,6 +132,8 @@ export function DishesScreen() {
           </Button>
         </div>
       )}
+
+      <BottomNav />
 
       {detail && (
         <DishDetail

@@ -25,7 +25,10 @@ export const supabaseRepo: Repo = {
       await supabase
         .from('categories')
         .select('id, kitchen_id, kind, key, name, sort_order')
-        .or(`kitchen_id.eq.${kitchenId},kitchen_id.is.null`)
+        // Только категории кухни. Системные строки (kitchen_id is null) —
+        // шаблон, который create_kitchen копирует внутрь кухни; если тянуть
+        // и их, каждая категория показывается дважды.
+        .eq('kitchen_id', kitchenId)
         .order('sort_order'),
     ) as Category[];
   },
@@ -67,6 +70,31 @@ export const supabaseRepo: Repo = {
         updated_by: cachedUserId,
       }).select().single(),
     ) as Product;
+  },
+
+  async createProducts(kitchenId, inputs: NewProduct[]) {
+    if (inputs.length === 0) return 0;
+    // Одним запросом: сорок отдельных вставок заняли бы несколько секунд.
+    // ignoreDuplicates — на случай, если продукт уже есть в кухне:
+    // уникальный индекс по имени иначе уронил бы всю пачку.
+    const { data, error } = await supabase
+      .from('products')
+      .upsert(
+        inputs.map((input) => ({
+          kitchen_id: kitchenId,
+          name: input.name,
+          category_id: input.categoryId,
+          unit: input.unit,
+          in_stock: input.inStock,
+          library_key: input.libraryKey ?? null,
+          created_by: cachedUserId,
+          updated_by: cachedUserId,
+        })),
+        { onConflict: 'kitchen_id,name', ignoreDuplicates: true },
+      )
+      .select('id');
+    if (error) throw new Error(error.message);
+    return data?.length ?? 0;
   },
 
   async updateProduct(id, patch: ProductPatch) {

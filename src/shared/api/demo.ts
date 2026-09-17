@@ -156,6 +156,32 @@ export const demoRepo: Repo = {
     return product;
   },
 
+  async createProducts(kitchenId, inputs: NewProduct[]) {
+    await delay();
+    const existing = new Set(
+      state.products.filter((p) => !p.deleted_at).map((p) => p.name.toLowerCase()),
+    );
+    const fresh = inputs
+      .filter((input) => !existing.has(input.name.toLowerCase()))
+      .map<Product>((input, i) => ({
+        id: `p-${Date.now()}-${i}`,
+        kitchen_id: kitchenId,
+        name: input.name,
+        category_id: input.categoryId,
+        unit: input.unit,
+        quantity: 0,
+        in_stock: input.inStock,
+        library_key: input.libraryKey ?? null,
+        deleted_at: null,
+        updated_by: DEMO_USER,
+        updated_at: new Date().toISOString(),
+      }));
+    state.products = [...state.products, ...fresh];
+    persist();
+    fresh.forEach((p) => emit(p.id));
+    return fresh.length;
+  },
+
   async updateProduct(id, patch: ProductPatch) {
     await delay();
     state.products = state.products.map((p) =>

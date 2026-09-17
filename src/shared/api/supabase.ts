@@ -1,7 +1,16 @@
 import { createClient } from '@supabase/supabase-js';
 import { isNative } from '@/shared/lib/platform';
 
-const url = import.meta.env.VITE_SUPABASE_URL;
+/**
+ * На странице Data API в Supabase показан адрес REST-эндпоинта, а не проекта —
+ * он оканчивается на /rest/v1, и скопировать его целиком проще, чем заметить
+ * разницу. Клиент дописывает свои пути сам, поэтому хвост надо отрезать:
+ * иначе запросы уходят на .../rest/v1/auth/v1/signup и возвращают 404.
+ */
+const normalizeUrl = (raw: string | undefined): string | undefined =>
+  raw?.trim().replace(/\/+$/, '').replace(/\/rest\/v1$/, '').replace(/\/auth\/v1$/, '');
+
+const url = normalizeUrl(import.meta.env.VITE_SUPABASE_URL);
 const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 export const hasSupabaseCredentials = Boolean(url && anonKey);

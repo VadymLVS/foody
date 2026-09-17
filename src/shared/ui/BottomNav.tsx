@@ -22,12 +22,19 @@ export function BottomNav({ onAdd }: { onAdd?: () => void }) {
       className="fixed inset-x-0 bottom-0 z-40 flex items-center justify-center gap-1 pb-3 pt-2"
       style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}
     >
-      <div className="flex items-center gap-5 rounded-full bg-surface px-4 py-2.5">
+      {/* Зона касания каждого пункта не меньше 44pt — иначе палец промахивается.
+          Иконка прежнего размера, растёт только невидимая область вокруг. */}
+      <div className="flex items-center rounded-full bg-surface px-1.5">
         {tabs.map(({ to, key, Icon }) => (
           <NavLink key={to} to={to} aria-label={t(key)}>
             {({ isActive }) => (
-              <span className={cn('flex items-center gap-1.5', isActive ? 'text-accent' : 'text-text-dim')}>
-                <Icon className="h-[18px] w-[18px]" strokeWidth={1.8} />
+              <span
+                className={cn(
+                  'flex h-12 min-w-[52px] items-center justify-center gap-1.5 px-3',
+                  isActive ? 'text-accent' : 'text-text-dim',
+                )}
+              >
+                <Icon className="h-[20px] w-[20px]" strokeWidth={1.8} />
                 {isActive && <span className="text-caption">{t(key)}</span>}
               </span>
             )}
@@ -39,9 +46,9 @@ export function BottomNav({ onAdd }: { onAdd?: () => void }) {
         type="button"
         aria-label={t('nav.add')}
         onClick={() => (onAdd ? onAdd() : navigate('/products'))}
-        className="flex h-[38px] w-11 items-center justify-center rounded-full bg-surface text-white transition active:scale-95"
+        className="flex h-12 w-12 items-center justify-center rounded-full bg-surface text-white transition active:scale-95"
       >
-        <Plus className="h-[18px] w-[18px]" />
+        <Plus className="h-[20px] w-[20px]" />
       </button>
     </nav>
   );
