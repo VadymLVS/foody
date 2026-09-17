@@ -16,7 +16,13 @@ export interface AuthApi {
   deleteAccount(): Promise<void>;
 }
 
-/** Единые сообщения об ошибках: коды Supabase показывать пользователю нельзя. */
+/**
+ * Понятные сообщения вместо кодов Supabase.
+ *
+ * Неизвестную ошибку показываем как есть: общая фраза «что-то пошло не так»
+ * не даёт ни человеку, ни разработчику ни одной зацепки. Исходный текст
+ * дополнительно уходит в консоль.
+ */
 export function authErrorMessage(raw: string): string {
   if (raw) console.error('[auth]', raw);
   const normalized = raw.toLowerCase();
@@ -38,7 +44,6 @@ export function authErrorMessage(raw: string): string {
   if (normalized.includes('email')) return 'Проверьте адрес почты';
 
   return raw || 'Что-то пошло не так. Попробуйте ещё раз';
-}
 }
 
 // ── Supabase ────────────────────────────────────────────────
