@@ -18,12 +18,27 @@ export interface AuthApi {
 
 /** Единые сообщения об ошибках: коды Supabase показывать пользователю нельзя. */
 export function authErrorMessage(raw: string): string {
+  if (raw) console.error('[auth]', raw);
   const normalized = raw.toLowerCase();
+
   if (normalized.includes('invalid login')) return 'Неверная почта или пароль';
-  if (normalized.includes('already registered')) return 'Такой аккаунт уже есть — войдите';
+  if (normalized.includes('already registered') || normalized.includes('already been registered')) {
+    return 'Такой аккаунт уже есть — войдите';
+  }
+  if (normalized.includes('database error')) {
+    return 'База не приняла регистрацию. Проверьте, что все пять миграций выполнены';
+  }
+  if (normalized.includes('confirm') || normalized.includes('not confirmed')) {
+    return 'Подтвердите адрес по ссылке из письма';
+  }
+  if (normalized.includes('rate limit') || normalized.includes('too many')) {
+    return 'Слишком много попыток. Подождите минуту';
+  }
   if (normalized.includes('password')) return 'Пароль должен быть не короче 8 символов';
   if (normalized.includes('email')) return 'Проверьте адрес почты';
-  return 'Что-то пошло не так. Попробуйте ещё раз';
+
+  return raw || 'Что-то пошло не так. Попробуйте ещё раз';
+}
 }
 
 // ── Supabase ────────────────────────────────────────────────
