@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-type StatusFilter = 'plan' | 'to-buy' | 'in-stock' | 'all';
+type StatusFilter = 'all' | 'to-buy' | 'plan' | 'in-stock';
 
 interface PendingOp { field: string; value: unknown; ts: number }
 
@@ -35,7 +35,9 @@ export const useUI = create<UIState>((set, get) => ({
   currentKitchenId: null,
   search: '',
   categoryFilter: 'all',
-  statusFilter: 'to-buy',   // приложение открывают перед магазином
+  // По умолчанию весь список (решение Vadym, backlog п. 14). Раньше был «Купить»
+  // с расчётом, что приложение открывают перед магазином.
+  statusFilter: 'all',
   activeProductId: null,
   showRowImages: true,
   playfulReactions: true,

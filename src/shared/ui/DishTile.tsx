@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Camera } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 import { Medal } from './Medal';
@@ -30,6 +31,13 @@ interface Props {
  * 1.5px обводки плюс 10px внутреннего отступа.
  */
 export function DishTile({ dish, selected, selectable, onClick }: Props) {
+  /*
+   * Блюда из справочника ссылаются на картинку по ключу, но библиотека картинок
+   * пока пустая. Если снимок не загрузился, показываем иконку категории,
+   * а не пустую плитку.
+   */
+  const [broken, setBroken] = useState(false);
+  const imageUrl = broken ? null : dish.imageUrl;
   const height = dish.aspect ? undefined : 104;
 
   return (
@@ -73,8 +81,14 @@ export function DishTile({ dish, selected, selectable, onClick }: Props) {
         className="relative overflow-hidden rounded-[4px] bg-surface-2"
         style={{ aspectRatio: dish.aspect ?? undefined, height }}
       >
-        {dish.imageUrl ? (
-          <img src={dish.imageUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
+        {imageUrl ? (
+          <img
+            src={imageUrl}
+            alt=""
+            loading="lazy"
+            onError={() => setBroken(true)}
+            className="h-full w-full object-cover"
+          />
         ) : (
           <div className="flex h-full w-full items-center justify-center border border-line">
             {dish.categoryIcon ?? <Camera className="h-6 w-6 text-[#3E3E3E]" />}
@@ -98,7 +112,7 @@ export function DishTile({ dish, selected, selectable, onClick }: Props) {
         <span
           className={cn(
             'font-display absolute bottom-2 left-2.5 right-2.5 text-headline leading-tight transition-colors duration-200',
-            selected ? 'text-accent' : dish.imageUrl ? 'text-white' : 'text-[#B8B8B8]',
+            selected ? 'text-accent' : imageUrl ? 'text-white' : 'text-[#B8B8B8]',
           )}
         >
           {dish.name}

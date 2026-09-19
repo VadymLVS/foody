@@ -44,6 +44,16 @@ body {
   border-radius: 4px;
 }
 
+/*
+ * У полей ввода фокус показывает их собственная рамка (Input, поле количества).
+ * Общее кольцо поверх неё давало двойную жёлтую рамку — было видно в «Новая кухня»
+ * и в форме правки продукта.
+ */
+input:focus-visible,
+textarea:focus-visible {
+  outline: none;
+}
+
 * { -webkit-tap-highlight-color: transparent; }
 
 /**

@@ -30,27 +30,37 @@ export function SearchField({
   };
 
   return (
-    <div className="flex items-center gap-2 border-b border-line px-0.5 pb-2">
+    <div className="flex items-center gap-2 border-b border-line pl-0.5">
       <Search className="h-[15px] w-[15px] shrink-0 text-[#4A4A4A]" />
       <input
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         inputMode="search"
-        className="min-w-0 flex-1 bg-transparent text-body text-text-primary outline-none placeholder:text-[#4A4A4A]"
+        className="h-11 min-w-0 flex-1 bg-transparent text-body text-text-primary outline-none placeholder:text-[#4A4A4A]"
       />
       {value ? (
-        <button type="button" onClick={() => onChange('')} aria-label="Очистить" className="text-[#4A4A4A]">
-          <X className="h-[15px] w-[15px]" />
+        <button
+          type="button"
+          onClick={() => onChange('')}
+          aria-label="Очистить"
+          className="flex h-11 w-11 shrink-0 items-center justify-center text-[#6E6E6E]"
+        >
+          <X className="h-5 w-5" />
         </button>
       ) : voiceReady ? (
         <button
           type="button"
           onClick={listen}
           aria-label="Найти голосом"
-          className={cn(listening ? 'text-accent' : 'text-[#4A4A4A]')}
+          // Зона касания 44×44, иконка 20px: раньше обе были по 15px и стояли
+          // вплотную к иконке чека (backlog п. 16)
+          className={cn(
+            'flex h-11 w-11 shrink-0 items-center justify-center',
+            listening ? 'text-accent' : 'text-[#6E6E6E]',
+          )}
         >
-          <Mic className={cn('h-[15px] w-[15px]', listening && 'animate-pulse')} />
+          <Mic className={cn('h-5 w-5', listening && 'animate-pulse')} />
         </button>
       ) : null}
     </div>

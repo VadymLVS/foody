@@ -24,7 +24,9 @@ export function BottomNav({ onAdd }: { onAdd?: () => void }) {
     >
       {/* Зона касания каждого пункта не меньше 44pt — иначе палец промахивается.
           Иконка прежнего размера, растёт только невидимая область вокруг. */}
-      <div className="flex items-center rounded-full bg-surface px-1.5">
+      {/* Островки светлее строк, с размытием фона и рамкой: на длинном списке
+          одноцветные с карточками островки сливались, и иконки висели поверх строк */}
+      <div className="flex items-center rounded-full border border-white/10 bg-[#262525]/90 px-1.5 shadow-[0_8px_24px_rgba(0,0,0,.5)] backdrop-blur-md">
         {tabs.map(({ to, key, Icon }) => (
           <NavLink key={to} to={to} aria-label={t(key)}>
             {({ isActive }) => (
@@ -46,7 +48,7 @@ export function BottomNav({ onAdd }: { onAdd?: () => void }) {
         type="button"
         aria-label={t('nav.add')}
         onClick={() => (onAdd ? onAdd() : navigate('/products'))}
-        className="flex h-12 w-12 items-center justify-center rounded-full bg-surface text-white transition active:scale-95"
+        className="flex h-12 w-12 items-center justify-center rounded-full border border-white/10 bg-[#262525]/90 text-white shadow-[0_8px_24px_rgba(0,0,0,.5)] backdrop-blur-md transition active:scale-95"
       >
         <Plus className="h-[20px] w-[20px]" />
       </button>

@@ -45,6 +45,11 @@ export function productLabel(key: string | null, fallback: string): string {
   return (dict().products as Record<string, string>)[key] ?? fallback;
 }
 
+/** Название блюда из стартового справочника по ключу. */
+export function dishLabel(key: string): string {
+  return (dict().dishes as Record<string, string>)[key] ?? key;
+}
+
 export function categoryLabel(
   kind: 'product' | 'dish',
   key: string | null,

@@ -1,13 +1,19 @@
 import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Soup, Salad, EggFried, CakeSlice, UtensilsCrossed, LayoutGrid, GalleryHorizontalEnd } from 'lucide-react';
-import { Button, DishTile, EmptyState, SearchField, Tabs, useToast, BottomNav } from '@/shared/ui';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import {
+  Soup, Salad, EggFried, CakeSlice, UtensilsCrossed, LayoutGrid, GalleryHorizontalEnd,
+  ListChecks, ChefHat, Sparkles,
+} from 'lucide-react';
+import {
+  ActionSheet, Button, DishTile, EmptyState, SearchField, Tabs, useToast, BottomNav,
+} from '@/shared/ui';
 import { useCurrentKitchen } from '@/shared/hooks/useKitchens';
 import { useDishes, usePlanActions } from '@/shared/hooks/useDishes';
 import { useCategories, useToggleProduct } from '@/shared/hooks/useProducts';
 import { searchByName } from '@/shared/lib/text';
 import { categoryLabel, t } from '@/shared/lib/i18n';
 import { DishDetail } from './DishDetail';
+import { CreateDishModal } from './CreateDishModal';
 import type { DishWithStatus } from '@/shared/api/repo';
 
 /** Иконка по категории — вместо цветной заливки на плитках без фото. */
@@ -33,7 +39,11 @@ export function DishesScreen() {
   const [tab, setTab] = useState('all');
   const [search, setSearch] = useState('');
   const [detail, setDetail] = useState<DishWithStatus | null>(null);
-  const [selecting, setSelecting] = useState(false);
+  // «Выбрать блюда» из пустого фильтра «Для плана» открывает сразу режим выбора
+  const [params] = useSearchParams();
+  const [selecting, setSelecting] = useState(params.get('select') === '1');
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
 
   const dishCategories = useMemo(() => categories.filter((c) => c.kind === 'dish'), [categories]);
   const readyCount = dishes.filter((d) => d.missingCount === 0).length;
@@ -59,20 +69,21 @@ export function DishesScreen() {
 
   return (
     <div className="mx-auto max-w-[520px] px-3 pt-4">
-      <header className="mb-4 flex items-center justify-between px-0.5">
-        <h1 className="text-title">{t('dishes.title')}</h1>
+      <header className="mb-4 flex items-center justify-between gap-3 px-0.5">
+        <h1 className="min-w-0 truncate text-title">{t('dishes.title')}</h1>
         {selecting ? (
-          <div className="flex items-center gap-1 rounded-full bg-surface p-0.5">
-            <span className="flex h-6 w-8 items-center justify-center rounded-full bg-accent">
-              <LayoutGrid className="h-4 w-4 text-accent-ink" />
+          /* shrink-0: переключатель не сжимается и не уезжает за край (backlog п. 5) */
+          <div className="flex shrink-0 items-center gap-1 rounded-full bg-surface p-1">
+            <span className="flex h-9 w-11 items-center justify-center rounded-full bg-accent" aria-label="Плитка">
+              <LayoutGrid className="h-[18px] w-[18px] text-accent-ink" />
             </span>
             <button
               type="button"
               aria-label="Карусель"
               onClick={() => navigate('/today/choose')}
-              className="flex h-6 w-8 items-center justify-center rounded-full text-text-dim"
+              className="flex h-9 w-11 items-center justify-center rounded-full text-text-muted"
             >
-              <GalleryHorizontalEnd className="h-4 w-4" />
+              <GalleryHorizontalEnd className="h-[18px] w-[18px]" />
             </button>
           </div>
         ) : (
@@ -100,7 +111,24 @@ export function DishesScreen() {
       <main className="pb-28">
         {isLoading && <p className="py-12 text-center text-caption text-text-muted">{t('common.loading')}</p>}
 
-        {!isLoading && visible.length === 0 && (
+        {/* Пустой раздел зовёт к действию: карусель — основной путь (backlog п. 4) */}
+        {!isLoading && dishes.length === 0 && (
+          <EmptyState
+            icon={<Sparkles className="h-12 w-12" />}
+            title={t('dishes.nothingYet')}
+            description={t('dishes.pickHint')}
+            action={
+              <div className="flex flex-col items-center gap-2">
+                <Button onClick={() => navigate('/dishes/quick-start')}>{t('products.quickStart')}</Button>
+                <Button variant="ghost" size="sm" onClick={() => setCreateOpen(true)}>
+                  {t('dishes.addOwn')}
+                </Button>
+              </div>
+            }
+          />
+        )}
+
+        {!isLoading && dishes.length > 0 && visible.length === 0 && (
           <EmptyState icon={<UtensilsCrossed className="h-12 w-12" />} title={t('dishes.empty')} />
         )}
 
@@ -133,7 +161,20 @@ export function DishesScreen() {
         </div>
       )}
 
-      <BottomNav />
+      {/* «+» — оба пути добавления блюда в одном месте */}
+      <BottomNav onAdd={() => setAddMenuOpen(true)} />
+
+      <ActionSheet
+        open={addMenuOpen}
+        title={t('common.add')}
+        onClose={() => setAddMenuOpen(false)}
+        actions={[
+          { label: t('dishes.addFromList'), Icon: ListChecks, onClick: () => navigate('/dishes/quick-start') },
+          { label: t('dishes.addOwn'), Icon: ChefHat, onClick: () => setCreateOpen(true) },
+        ]}
+      />
+
+      <CreateDishModal kitchenId={kitchenId} open={createOpen} onClose={() => setCreateOpen(false)} />
 
       {detail && (
         <DishDetail

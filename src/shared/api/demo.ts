@@ -1,5 +1,5 @@
 import type { Category, DeckCard, DishIngredient, PlanNeedRow, Product, Unit } from '@/shared/db/types';
-import type { DishWithStatus, NewProduct, ProductPatch, Repo, RealtimeEvent } from './repo';
+import type { DishWithStatus, NewDish, NewProduct, ProductPatch, Repo, RealtimeEvent } from './repo';
 import { productLabel } from '@/shared/lib/i18n';
 
 /**
@@ -50,10 +50,12 @@ const SEED: Array<[string, string, Unit, number, boolean]> = [
 
 type SeedIngredient = [productId: string | null, name: string, qty: number | null];
 
-const DISHES: Array<{
-  id: string; name: string; cat: string; lib: string | null;
+interface DemoDish {
+  id: string; name: string; cat: string | null; lib: string | null;
   w: number | null; h: number | null; ing: SeedIngredient[];
-}> = [
+}
+
+const DISHES: DemoDish[] = [
   { id: 'd-1', name: 'Омлет', cat: 'dc-brk', lib: 'omlet', w: 1200, h: 1200,
     ing: [['p-2', 'Яйца', 3], ['p-0', 'Молоко', 0.2], ['p-1', 'Сыр', 50]] },
   { id: 'd-2', name: 'Жареная картошка', cat: 'dc-main', lib: 'zharenaya_kartoshka', w: 1200, h: 900,
@@ -87,17 +89,22 @@ function seedProducts(): Product[] {
   }));
 }
 
-interface State { products: Product[]; favorites: string[]; planned: string[]; deletedDishes: string[] }
+interface State {
+  products: Product[]; favorites: string[]; planned: string[]; deletedDishes: string[];
+  customDishes: DemoDish[];
+}
 
 function load(): State {
   try {
     const raw = localStorage.getItem(KEY);
     if (raw) return JSON.parse(raw) as State;
   } catch { /* приватный режим */ }
-  return { products: seedProducts(), favorites: ['d-3'], planned: ['d-5'], deletedDishes: [] };
+  return { products: seedProducts(), favorites: ['d-3'], planned: ['d-5'], deletedDishes: [], customDishes: [] };
 }
 
 const state: State = load();
+// Состояние из прежних версий демо не знает про свои блюда
+state.customDishes ??= [];
 
 function persist() {
   try { localStorage.setItem(KEY, JSON.stringify(state)); } catch { /* ignore */ }
@@ -108,7 +115,7 @@ const emit = (productId: string) => listeners.forEach((f) => f({ productId, upda
 const delay = () => new Promise((r) => setTimeout(r, 100));
 
 const ingredientsOf = (dishId: string): DishIngredient[] => {
-  const dish = DISHES.find((d) => d.id === dishId);
+  const dish = allDishes().find((d) => d.id === dishId);
   return (dish?.ing ?? []).map(([pid, name, qty], i) => ({
     id: `${dishId}-i${i}`, dish_id: dishId, product_id: pid, product_name: name, quantity: qty,
   }));
@@ -120,7 +127,8 @@ function statusOf(dishId: string) {
   return { missingCount: missing.length, missingNames: missing.map((m) => m.product_name) };
 }
 
-const activeDishes = () => DISHES.filter((d) => !state.deletedDishes.includes(d.id));
+const allDishes = (): DemoDish[] => [...DISHES, ...state.customDishes];
+const activeDishes = () => allDishes().filter((d) => !state.deletedDishes.includes(d.id));
 
 export const demoRepo: Repo = {
   isDemo: true,
@@ -158,15 +166,18 @@ export const demoRepo: Repo = {
 
   async createProducts(kitchenId, inputs: NewProduct[]) {
     await delay();
-    const existing = new Set(
-      state.products.filter((p) => !p.deleted_at).map((p) => p.name.toLowerCase()),
+    const taken = new Set(
+      state.products.filter((p) => !p.deleted_at).map((p) => p.name.trim().toLowerCase()),
     );
-    const fresh = inputs
-      .filter((input) => !existing.has(input.name.toLowerCase()))
-      .map<Product>((input, i) => ({
+    const fresh: Product[] = [];
+    inputs.forEach((input, i) => {
+      const key = input.name.trim().toLowerCase();
+      if (taken.has(key)) return;
+      taken.add(key);
+      fresh.push({
         id: `p-${Date.now()}-${i}`,
         kitchen_id: kitchenId,
-        name: input.name,
+        name: input.name.trim(),
         category_id: input.categoryId,
         unit: input.unit,
         quantity: 0,
@@ -175,11 +186,28 @@ export const demoRepo: Repo = {
         deleted_at: null,
         updated_by: DEMO_USER,
         updated_at: new Date().toISOString(),
-      }));
+      });
+    });
     state.products = [...state.products, ...fresh];
     persist();
     fresh.forEach((p) => emit(p.id));
-    return fresh.length;
+    return fresh;
+  },
+
+  async setInStock(ids: string[], inStock: boolean) {
+    await delay();
+    const set = new Set(ids);
+    state.products = state.products.map((p) =>
+      set.has(p.id) ? { ...p, in_stock: inStock, updated_at: new Date().toISOString() } : p);
+    persist();
+    ids.forEach(emit);
+  },
+
+  async countQuantifiedUsage(productId: string) {
+    return allDishes()
+      .filter((d) => !state.deletedDishes.includes(d.id))
+      .flatMap((d) => d.ing)
+      .filter(([pid, , qty]) => pid === productId && qty != null).length;
   },
 
   async updateProduct(id, patch: ProductPatch) {
@@ -217,6 +245,22 @@ export const demoRepo: Repo = {
       isPlanned: state.planned.includes(d.id),
       ...statusOf(d.id),
     }));
+  },
+
+  async createDish(_kitchenId, input: NewDish) {
+    await delay();
+    const id = `d-${Date.now()}`;
+    state.customDishes = [...state.customDishes, {
+      id,
+      name: input.name.trim(),
+      cat: input.categoryId,
+      lib: input.libraryKey ?? null,
+      w: null,
+      h: null,
+      ing: input.ingredients.map((i) => [i.productId, i.productName, i.quantity] as SeedIngredient),
+    }];
+    persist();
+    return id;
   },
 
   async deleteDish(id) {
@@ -266,7 +310,7 @@ export const demoRepo: Repo = {
     await delay();
     const byProduct = new Map<string, PlanNeedRow>();
     for (const dishId of state.planned) {
-      const dish = DISHES.find((d) => d.id === dishId);
+      const dish = allDishes().find((d) => d.id === dishId);
       if (!dish) continue;
       for (const ing of ingredientsOf(dishId)) {
         const product = state.products.find((p) => p.id === ing.product_id);

@@ -2,22 +2,42 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Check, RotateCcw, X } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 
-/** Доля ширины карты, после которой свайп засчитывается. */
-const COMMIT_RATIO = 0.4;
+/*
+ * Порог свайпа (backlog п. 9). Было 40% ширины карты: на iPhone 16 Pro Max
+ * это ~160px, почти полэкрана. Теперь четверть ширины, но не больше 110px,
+ * чтобы на больших экранах порог не рос вместе с картой.
+ */
+const COMMIT_RATIO = 0.25;
+const COMMIT_MAX_PX = 110;
+/*
+ * Быстрый короткий флик засчитывается независимо от расстояния: это самый
+ * естественный жест для колоды, а раньше скорость не учитывалась вовсе.
+ * Минимальный сдвиг отсекает случайное касание.
+ */
+const FLICK_VELOCITY = 0.35; // px/ms — порог жеста iOS около 0.3–0.5
+const FLICK_MIN_PX = 24;
 
 export interface DeckItem {
   id: string;
   title: string;
   subtitle?: string;
-  /** Фон карты: снимок или градиент-заглушка. */
+  /** Фон карты — градиент. Виден всегда, пока нет снимка или он не загрузился. */
   background: string;
-  isImage?: boolean;
+  /** Снимок поверх фона. Библиотека картинок пока пустая, поэтому 404 — норма. */
+  image?: string | null;
 }
 
 interface Props {
   items: DeckItem[];
   onDecide: (item: DeckItem, accepted: boolean) => void;
   onUndo?: (item: DeckItem, wasAccepted: boolean) => void;
+  /** Сколько карт пройдено — для полосы прогресса. */
+  onProgress?: (index: number) => void;
+  /**
+   * Карты закончились. Раньше экран вычислял это сам, сравнивая число
+   * отмеченных карт с их общим числом, и ошибался при любом отказе (п. 10).
+   */
+  onEnd?: () => void;
   acceptLabel: string;
   rejectLabel: string;
   overlay?: React.ReactNode;
@@ -31,12 +51,23 @@ interface Props {
  * Кнопки-дублёры обязательны: жест недоступен с клавиатуры.
  */
 export function SwipeDeck({
-  items, onDecide, onUndo, acceptLabel, rejectLabel, overlay,
+  items, onDecide, onUndo, onProgress, onEnd, acceptLabel, rejectLabel, overlay,
 }: Props) {
   const [index, setIndex] = useState(0);
   const [offset, setOffset] = useState(0);
   const [dragging, setDragging] = useState(false);
+  /*
+   * Жест отслеживается в ref, состояние — только для отрисовки. Состояние
+   * обновляется со следующим рендером, а быстрый флик длится 50–100 мс:
+   * первые движения приходили раньше, чем dragging становился true, и
+   * отбрасывались, а при отпускании читался устаревший сдвиг. Флик не
+   * засчитывался вообще (найдено прогоном в браузере).
+   */
+  const draggingRef = useRef(false);
+  const offsetRef = useRef(0);
   const startX = useRef(0);
+  /** Последние точки жеста для расчёта скорости в момент отпускания. */
+  const samples = useRef<Array<{ x: number; t: number }>>([]);
   const history = useRef<Array<{ item: DeckItem; accepted: boolean }>>([]);
   const deckRef = useRef<HTMLDivElement>(null);
 
@@ -57,6 +88,13 @@ export function SwipeDeck({
   }, [onUndo]);
 
   useEffect(() => {
+    onProgress?.(index);
+    if (items.length > 0 && index >= items.length) onEnd?.();
+    // onProgress и onEnd приходят inline-функциями и в зависимости не входят
+    // намеренно: реагируем только на смену позиции в колоде
+  }, [index, items.length]);
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'ArrowRight') commit(true);
       if (e.key === 'ArrowLeft') commit(false);
@@ -66,10 +104,26 @@ export function SwipeDeck({
   }, [commit]);
 
   const release = () => {
-    if (!dragging) return;
+    if (!draggingRef.current) return;
+    draggingRef.current = false;
     setDragging(false);
+    const offset = offsetRef.current;
+    offsetRef.current = 0;
+
     const width = deckRef.current?.offsetWidth ?? 320;
-    if (Math.abs(offset) > width * COMMIT_RATIO) commit(offset > 0);
+    const threshold = Math.min(width * COMMIT_RATIO, COMMIT_MAX_PX);
+
+    // Скорость по последним ~100 мс жеста, а не по всему пути
+    const recent = samples.current;
+    const last = recent[recent.length - 1];
+    const first = recent.find((p) => last && last.t - p.t <= 100) ?? recent[0];
+    const velocity = last && first && last.t > first.t ? (last.x - first.x) / (last.t - first.t) : 0;
+    samples.current = [];
+
+    const flick = Math.abs(velocity) > FLICK_VELOCITY && Math.abs(offset) > FLICK_MIN_PX
+      && Math.sign(velocity) === Math.sign(offset);
+
+    if (Math.abs(offset) > threshold || flick) commit(offset > 0);
     else setOffset(0);
   };
 
@@ -82,10 +136,18 @@ export function SwipeDeck({
         className="relative flex-1 touch-none select-none"
         onPointerDown={(e) => {
           startX.current = e.clientX;
+          samples.current = [{ x: e.clientX, t: e.timeStamp }];
+          draggingRef.current = true;
+          offsetRef.current = 0;
           setDragging(true);
           e.currentTarget.setPointerCapture(e.pointerId);
         }}
-        onPointerMove={(e) => dragging && setOffset(e.clientX - startX.current)}
+        onPointerMove={(e) => {
+          if (!draggingRef.current) return;
+          samples.current = [...samples.current.slice(-8), { x: e.clientX, t: e.timeStamp }];
+          offsetRef.current = e.clientX - startX.current;
+          setOffset(offsetRef.current);
+        }}
         onPointerUp={release}
         onPointerCancel={release}
       >
@@ -104,11 +166,17 @@ export function SwipeDeck({
                   : 'translateY(10px) scale(0.96)',
                 zIndex: top ? 3 : 2,
                 opacity: top ? 1 : 0.55,
-                background: item.isImage ? undefined : item.background,
+                background: item.background,
               }}
             >
-              {item.isImage && (
-                <img src={item.background} alt="" className="h-full w-full object-cover" />
+              {item.image && (
+                <img
+                  src={item.image}
+                  alt=""
+                  draggable={false}
+                  onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                  className="absolute inset-0 h-full w-full object-cover"
+                />
               )}
 
               <span

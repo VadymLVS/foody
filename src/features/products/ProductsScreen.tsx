@@ -1,27 +1,37 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Pencil, Trash2, PartyPopper, PackagePlus, SearchX, Receipt, CloudOff, Sparkles } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import {
+  CloudOff, ListChecks, PackageCheck, PackagePlus, PartyPopper, Pencil, Receipt, SearchX,
+  Sparkles, Trash2, UtensilsCrossed,
+} from 'lucide-react';
 import {
   ActionSheet, BottomNav, Button, EmptyState, FilterPills, ProductRow, SearchField, Tabs,
   useToast, type PlanNeed,
 } from '@/shared/ui';
 import { repo } from '@/shared/api';
-import { useNavigate } from 'react-router-dom';
 import { useCurrentKitchen } from '@/shared/hooks/useKitchens';
 import {
-  useCategories, useDeleteProduct, usePendingCount, useProducts, useQueueFlusher,
-  useRenameProduct, useSetQuantity, useToggleProduct,
+  useCategories, useDeleteProduct, usePendingCount, useProducts, useProductsRealtime,
+  useQueueFlusher, useSetQuantity, useToggleProduct,
 } from '@/shared/hooks/useProducts';
-import { usePlanNeeds } from '@/shared/hooks/useDishes';
+import { usePlanNeeds, usePlanned } from '@/shared/hooks/useDishes';
 import { useUI } from '@/shared/store/ui';
 import { searchByName, SEARCH_MIN_LENGTH } from '@/shared/lib/text';
 import { categoryLabel, t } from '@/shared/lib/i18n';
 import { groupByCategory } from './grouping';
 import { AddProductModal } from './AddProductModal';
 import { ReceiptImport } from './ReceiptImport';
-import { RenameProductModal } from './RenameProductModal';
 import type { Product } from '@/shared/db/types';
 
-type Status = 'plan' | 'to-buy' | 'in-stock' | 'all';
+type Status = 'all' | 'to-buy' | 'plan' | 'in-stock';
+
+/**
+ * Какие фильтры группируются по отделам магазина (D-007).
+ * «Купить» и «Для плана» — это списки для похода в магазин, по ним идут по залу.
+ * «Все» и «В наличии» — просмотр того, что есть: там заголовки отделов только
+ * занимают место, нужен плоский алфавит (backlog п. 15, решение Vadym).
+ */
+const GROUPED: ReadonlySet<Status> = new Set(['to-buy', 'plan']);
 
 export function ProductsScreen() {
   const kitchen = useCurrentKitchen();
@@ -42,19 +52,22 @@ export function ProductsScreen() {
   const { data: products = [], isLoading } = useProducts(kitchenId);
   const { data: categories = [] } = useCategories(kitchenId);
   const { data: needs = [] } = usePlanNeeds(kitchenId);
+  const { data: planned = [] } = usePlanned(kitchenId);
+
+  // Подписка на изменения — только здесь, в одном месте (backlog п. 7)
+  useProductsRealtime(kitchenId);
+  useQueueFlusher(kitchenId);
+  const pending = usePendingCount();
 
   const toggleProduct = useToggleProduct(kitchenId);
   const setQuantity = useSetQuantity(kitchenId);
-  const renameProduct = useRenameProduct(kitchenId);
   const { remove, restore } = useDeleteProduct(kitchenId);
 
   const [addOpen, setAddOpen] = useState(false);
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [receiptOpen, setReceiptOpen] = useState(false);
-
-  useQueueFlusher(kitchenId);
-  const pending = usePendingCount();
   const [menuFor, setMenuFor] = useState<Product | null>(null);
-  const [renameFor, setRenameFor] = useState<Product | null>(null);
+  const [editFor, setEditFor] = useState<Product | null>(null);
 
   /**
    * Отмеченное в этом заходе остаётся в списке до смены фильтра.
@@ -91,14 +104,20 @@ export function ProductsScreen() {
     if (statusFilter === 'plan') list = list.filter((p) => needByProduct.has(p.id) || kept(p));
     if (statusFilter === 'to-buy') list = list.filter((p) => !p.in_stock || kept(p));
     if (statusFilter === 'in-stock') list = list.filter((p) => p.in_stock || kept(p));
-    return searchByName(list, search);
-  }, [products, categoryFilter, statusFilter, search, needByProduct, justToggled]);
+    if (searching) return searchByName(list, search);
+    return [...list].sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+  }, [products, categoryFilter, statusFilter, search, searching, needByProduct, justToggled]);
 
-  // При поиске группировка мешает: ищут конкретный продукт, а не изучают список
-  const groups = useMemo(
-    () => (searching ? null : groupByCategory(visible, categories)),
-    [searching, visible, categories],
-  );
+  /*
+   * Заголовки отделов показываем, только если они что-то дают:
+   * - не при поиске — там ищут конкретный продукт;
+   * - не на вкладке конкретной категории — заголовок повторял бы вкладку;
+   * - только в фильтрах-списках покупок.
+   */
+  const groups = useMemo(() => {
+    const grouped = !searching && categoryFilter === 'all' && GROUPED.has(statusFilter);
+    return grouped ? groupByCategory(visible, categories) : null;
+  }, [searching, categoryFilter, statusFilter, visible, categories]);
 
   const handleDelete = (product: Product) => {
     remove(product.id);
@@ -114,29 +133,89 @@ export function ProductsScreen() {
       need={needByProduct.get(product.id)}
       showImage={showImages}
       expanded={activeProductId === product.id}
+      // Ползунок только отмечает наличие и панель не раскрывает — иначе в магазине
+      // каждая отметка открывала бы панель (решение Vadym, backlog п. 12)
       onToggle={(next) => {
         toggleProduct(product.id, next);
         remember(product.id);
-        setActiveProduct(next ? product.id : null);
       }}
-      onExpand={() => {
-        if (!product.in_stock) {
-          // Тап по строке включает продукт: попасть в ползунок на ходу трудно
-          toggleProduct(product.id, true);
-          remember(product.id);
-          setActiveProduct(product.id);
-          return;
-        }
-        setActiveProduct(activeProductId === product.id ? null : product.id);
-      }}
+      // Тап по строке открывает и закрывает панель у любого продукта
+      onExpand={() => setActiveProduct(activeProductId === product.id ? null : product.id)}
       onQuantityChange={(q) => setQuantity(product.id, q)}
       onMenu={() => setMenuFor(product)}
     />
   );
 
+  /** Своё пустое состояние у каждого фильтра (backlog п. 13). */
+  const renderEmpty = () => {
+    if (searching) {
+      return (
+        <EmptyState
+          icon={<SearchX className="h-12 w-12" />}
+          title={t('products.notFound')}
+          action={
+            <Button onClick={() => setAddOpen(true)}>
+              {t('products.create', { name: search.trim() })}
+            </Button>
+          }
+        />
+      );
+    }
+    // Приглашение добавить — только когда в кухне нет ни одного продукта (D-041)
+    if (products.length === 0) {
+      return (
+        <EmptyState
+          icon={<Sparkles className="h-12 w-12" />}
+          title={t('products.nothingYet')}
+          description={t('products.pickUsual')}
+          action={
+            <div className="flex flex-col items-center gap-2">
+              <Button onClick={() => navigate('/products/quick-start')}>
+                {t('products.quickStart')}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setAddOpen(true)}>
+                {t('products.firstProduct')}
+              </Button>
+            </div>
+          }
+        />
+      );
+    }
+    if (statusFilter === 'plan') {
+      return planned.length === 0 ? (
+        <EmptyState
+          icon={<UtensilsCrossed className="h-12 w-12" />}
+          title={t('products.plan.noDishes')}
+          description={t('products.plan.noDishesHint')}
+          action={
+            <Button onClick={() => navigate('/dishes?select=1')}>
+              {t('products.plan.pickDishes')}
+            </Button>
+          }
+        />
+      ) : (
+        <EmptyState icon={<PartyPopper className="h-12 w-12" />} title={t('products.plan.allSet')} />
+      );
+    }
+    if (statusFilter === 'to-buy') {
+      return <EmptyState icon={<PartyPopper className="h-12 w-12" />} title={t('products.allSet')} />;
+    }
+    if (statusFilter === 'in-stock') {
+      return <EmptyState icon={<PackageCheck className="h-12 w-12" />} title={t('products.inStock.empty')} />;
+    }
+    // «Все» при непустой кухне пуст только на вкладке категории без продуктов
+    return (
+      <EmptyState
+        icon={<PackagePlus className="h-12 w-12" />}
+        title={t('products.empty')}
+        action={<Button onClick={() => setAddOpen(true)}>{t('common.add')}</Button>}
+      />
+    );
+  };
+
   return (
     <div className="mx-auto max-w-[520px] px-3 pt-4">
-      <header className="mb-4 flex items-center gap-2 px-0.5">
+      <header className="mb-3 flex items-center gap-2 px-0.5">
         <h1 className="text-title">{kitchen?.name ?? 'PantrySync'}</h1>
 
         {/* Несохранённое видно сразу: в магазине это важнее любой другой детали */}
@@ -149,20 +228,24 @@ export function ProductsScreen() {
           <span className="h-1.5 w-1.5 rounded-full bg-accent" aria-label="Всё сохранено" />
         )}
 
+        {repo.isDemo && (
+          <span className="ml-auto rounded-full bg-surface px-2 py-0.5 text-micro text-text-muted">
+            демо
+          </span>
+        )}
+
+        {/* Зона касания 44×44 при иконке 22px (backlog п. 16) */}
         <button
           type="button"
           onClick={() => setReceiptOpen(true)}
           aria-label="Импорт чека"
-          className="ml-auto text-text-dim"
+          className={
+            'flex h-11 w-11 items-center justify-center rounded-full text-text-muted active:bg-surface '
+            + (repo.isDemo ? '' : 'ml-auto')
+          }
         >
-          <Receipt className="h-[18px] w-[18px]" />
+          <Receipt className="h-[22px] w-[22px]" />
         </button>
-
-        {repo.isDemo && (
-          <span className="rounded-full bg-surface px-2 py-0.5 text-micro text-text-muted">
-            демо
-          </span>
-        )}
       </header>
 
       <div className="mb-4">
@@ -183,15 +266,16 @@ export function ProductsScreen() {
         />
       </div>
 
+      {/* «Все» первым, как у вкладок категорий выше (backlog п. 14) */}
       <div className="mb-4">
         <FilterPills
           active={statusFilter}
           onChange={(id) => setStatusFilter(id as Status)}
           items={[
-            { id: 'plan', label: t('products.filter.plan') },
-            { id: 'to-buy', label: t('products.filter.toBuy') },
-            { id: 'in-stock', label: t('products.filter.inStock') },
             { id: 'all', label: t('products.filter.all') },
+            { id: 'to-buy', label: t('products.filter.toBuy') },
+            { id: 'plan', label: t('products.filter.plan') },
+            { id: 'in-stock', label: t('products.filter.inStock') },
           ]}
         />
       </div>
@@ -199,50 +283,11 @@ export function ProductsScreen() {
       <main className="pb-28">
         {isLoading && <p className="py-12 text-center text-caption text-text-muted">{t('common.loading')}</p>}
 
-        {!isLoading && visible.length === 0 && (
-          searching ? (
-            <EmptyState
-              icon={<SearchX className="h-12 w-12" />}
-              title={t('products.notFound')}
-              action={
-                <Button onClick={() => setAddOpen(true)}>
-                  {t('products.create', { name: search.trim() })}
-                </Button>
-              }
-            />
-          ) : products.length === 0 ? (
-            /* Пустая кухня и «всё куплено» — разные вещи. Раньше при нуле
-               продуктов показывалось «Всё есть», и человек, зашедший впервые,
-               видел поздравление на пустом месте. */
-            <EmptyState
-              icon={<Sparkles className="h-12 w-12" />}
-              title={t('products.nothingYet')}
-              description={t('products.pickUsual')}
-              action={
-                <div className="flex flex-col items-center gap-2">
-                  <Button onClick={() => navigate('/products/quick-start')}>
-                    {t('products.quickStart')}
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={() => setAddOpen(true)}>
-                    {t('products.firstProduct')}
-                  </Button>
-                </div>
-              }
-            />
-          ) : statusFilter === 'to-buy' ? (
-            <EmptyState icon={<PartyPopper className="h-12 w-12" />} title={t('products.allSet')} />
-          ) : (
-            <EmptyState
-              icon={<PackagePlus className="h-12 w-12" />}
-              title={t('products.empty')}
-              action={<Button onClick={() => setAddOpen(true)}>{t('common.add')}</Button>}
-            />
-          )
-        )}
+        {!isLoading && visible.length === 0 && renderEmpty()}
 
-        {searching && visible.map(renderRow)}
+        {!groups && visible.map(renderRow)}
 
-        {!searching && groups?.map((group) => (
+        {groups?.map((group) => (
           <section key={group.categoryId ?? 'none'} className="mb-4">
             <h2 className="mb-2 px-0.5 text-micro text-text-dim">{group.title}</h2>
             {group.products.map(renderRow)}
@@ -250,7 +295,18 @@ export function ProductsScreen() {
         ))}
       </main>
 
-      <BottomNav onAdd={() => setAddOpen(true)} />
+      {/* «+» — оба пути добавления в одном месте (backlog п. 2, решение Vadym) */}
+      <BottomNav onAdd={() => setAddMenuOpen(true)} />
+
+      <ActionSheet
+        open={addMenuOpen}
+        title={t('common.add')}
+        onClose={() => setAddMenuOpen(false)}
+        actions={[
+          { label: t('products.addFromList'), Icon: ListChecks, onClick: () => navigate('/products/quick-start') },
+          { label: t('products.addOwn'), Icon: PackagePlus, onClick: () => setAddOpen(true) },
+        ]}
+      />
 
       {receiptOpen && (
         <ReceiptImport kitchenId={kitchenId} onClose={() => setReceiptOpen(false)} />
@@ -264,24 +320,23 @@ export function ProductsScreen() {
         onClose={() => setAddOpen(false)}
       />
 
+      <AddProductModal
+        kitchenId={kitchenId}
+        open={editFor !== null}
+        product={editFor}
+        existingNames={products.map((p) => p.name)}
+        onClose={() => setEditFor(null)}
+      />
+
       <ActionSheet
         open={menuFor !== null}
         title={menuFor?.name}
         onClose={() => setMenuFor(null)}
         actions={menuFor ? [
-          { label: 'Переименовать', Icon: Pencil, onClick: () => setRenameFor(menuFor) },
+          { label: t('products.edit'), Icon: Pencil, onClick: () => setEditFor(menuFor) },
           { label: t('common.delete'), Icon: Trash2, danger: true, onClick: () => handleDelete(menuFor) },
         ] : []}
       />
-
-      {renameFor && (
-        <RenameProductModal
-          open
-          currentName={renameFor.name}
-          onSave={(name) => renameProduct(renameFor.id, name)}
-          onClose={() => setRenameFor(null)}
-        />
-      )}
     </div>
   );
 }

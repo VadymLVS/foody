@@ -1,6 +1,6 @@
 import { supabase, hasSupabaseCredentials } from './supabase';
 import type { Category, DeckCard, DishIngredient, PlanNeedRow, Product, Unit } from '@/shared/db/types';
-import type { DishWithStatus, NewProduct, ProductPatch, Repo, RealtimeEvent } from './repo';
+import type { DishWithStatus, NewDish, NewProduct, ProductPatch, Repo, RealtimeEvent } from './repo';
 import { productLabel } from '@/shared/lib/i18n';
 
 let cachedUserId = '';
@@ -73,28 +73,75 @@ export const supabaseRepo: Repo = {
   },
 
   async createProducts(kitchenId, inputs: NewProduct[]) {
-    if (inputs.length === 0) return 0;
-    // Одним запросом: сорок отдельных вставок заняли бы несколько секунд.
-    // ignoreDuplicates — на случай, если продукт уже есть в кухне:
-    // уникальный индекс по имени иначе уронил бы всю пачку.
-    const { data, error } = await supabase
-      .from('products')
-      .upsert(
-        inputs.map((input) => ({
-          kitchen_id: kitchenId,
-          name: input.name,
-          category_id: input.categoryId,
-          unit: input.unit,
-          in_stock: input.inStock,
-          library_key: input.libraryKey ?? null,
-          created_by: cachedUserId,
-          updated_by: cachedUserId,
-        })),
-        { onConflict: 'kitchen_id,name', ignoreDuplicates: true },
-      )
-      .select('id');
+    if (inputs.length === 0) return [];
+
+    /*
+     * Раньше здесь был upsert с onConflict 'kitchen_id,name'. Такого ограничения
+     * в схеме нет: уникальный индекс объявлен по (kitchen_id, lower(name)) и только
+     * для неудалённых строк. Postgres отвергал запрос целиком, а ошибка никуда
+     * не выводилась, поэтому карусель молча ничего не сохраняла (backlog п. 1).
+     *
+     * Теперь: заранее отсеиваем имена, которые уже есть в кухне, и дубли внутри
+     * самой пачки, затем обычный insert одним запросом.
+     */
+    const existing = unwrap(
+      await supabase.from('products').select('name')
+        .eq('kitchen_id', kitchenId).is('deleted_at', null),
+    ) as Array<{ name: string }>;
+    const taken = new Set(existing.map((p) => p.name.trim().toLowerCase()));
+
+    const fresh = inputs.filter((input) => {
+      const key = input.name.trim().toLowerCase();
+      if (taken.has(key)) return false;
+      taken.add(key);
+      return true;
+    });
+    if (fresh.length === 0) return [];
+
+    const row = (input: NewProduct) => ({
+      kitchen_id: kitchenId,
+      name: input.name.trim(),
+      category_id: input.categoryId,
+      unit: input.unit,
+      in_stock: input.inStock,
+      library_key: input.libraryKey ?? null,
+      created_by: cachedUserId,
+      updated_by: cachedUserId,
+    });
+
+    const { data, error } = await supabase.from('products').insert(fresh.map(row)).select();
+    if (!error) return (data ?? []) as Product[];
+
+    // 23505 — нарушение уникальности: кто-то добавил тот же продукт между нашей
+    // проверкой и вставкой (например, Алина в ту же секунду). Досылаем по одному,
+    // пропуская дубли, чтобы не терять всю пачку из-за одной строки.
+    if (error.code !== '23505') throw new Error(error.message);
+    const created: Product[] = [];
+    for (const input of fresh) {
+      const single = await supabase.from('products').insert(row(input)).select().single();
+      if (single.error) {
+        if (single.error.code === '23505') continue;
+        throw new Error(single.error.message);
+      }
+      created.push(single.data as Product);
+    }
+    return created;
+  },
+
+  async setInStock(ids: string[], inStock: boolean) {
+    if (ids.length === 0) return;
+    const { error } = await supabase.from('products')
+      .update({ in_stock: inStock, updated_by: cachedUserId }).in('id', ids);
     if (error) throw new Error(error.message);
-    return data?.length ?? 0;
+  },
+
+  async countQuantifiedUsage(productId: string) {
+    const { count, error } = await supabase.from('dish_ingredients')
+      .select('id', { count: 'exact', head: true })
+      .eq('product_id', productId)
+      .not('quantity', 'is', null);
+    if (error) throw new Error(error.message);
+    return count ?? 0;
   },
 
   async updateProduct(id, patch: ProductPatch) {
@@ -117,7 +164,14 @@ export const supabaseRepo: Repo = {
 
   subscribeProducts(kitchenId, onChange: (e: RealtimeEvent) => void) {
     const channel = supabase
-      .channel(`kitchen:${kitchenId}:products`)
+      /*
+       * Суффикс обязателен. Supabase на channel() с уже существующим именем
+       * возвращает тот же канал, а добавить обработчик к подписанному каналу
+       * нельзя — приложение падало при второй подписке (backlog п. 7).
+       * Подписка теперь живёт в одном месте (useProductsRealtime), суффикс —
+       * страховка на случай, если её когда-нибудь вызовут дважды.
+       */
+      .channel(`kitchen:${kitchenId}:products:${Math.random().toString(36).slice(2, 10)}`)
       .on('postgres_changes',
         { event: '*', schema: 'public', table: 'products', filter: `kitchen_id=eq.${kitchenId}` },
         (payload: { new?: Partial<Product>; old?: Partial<Product> }) => {
@@ -168,6 +222,35 @@ export const supabaseRepo: Repo = {
         isPlanned: planned.has(row.id),
       };
     });
+  },
+
+  async createDish(kitchenId, input: NewDish) {
+    const dish = unwrap(
+      await supabase.from('dishes').insert({
+        kitchen_id: kitchenId,
+        name: input.name.trim(),
+        category_id: input.categoryId,
+        library_key: input.libraryKey ?? null,
+        created_by: cachedUserId,
+      }).select('id').single(),
+    ) as { id: string };
+
+    if (input.ingredients.length > 0) {
+      const { error } = await supabase.from('dish_ingredients').insert(
+        input.ingredients.map((ingredient) => ({
+          dish_id: dish.id,
+          product_id: ingredient.productId,
+          product_name: ingredient.productName,
+          quantity: ingredient.quantity,
+        })),
+      );
+      if (error) {
+        // Блюдо без состава бесполезно и сбивает счётчики готовности — откатываем
+        await supabase.from('dishes').delete().eq('id', dish.id);
+        throw new Error(error.message);
+      }
+    }
+    return dish.id;
   },
 
   async deleteDish(id) {

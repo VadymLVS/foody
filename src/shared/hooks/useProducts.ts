@@ -22,15 +22,24 @@ export function useSuggestions() {
   });
 }
 
+/**
+ * Только данные. Подписка на изменения вынесена в useProductsRealtime:
+ * раньше она жила здесь, и каждый компонент, которому нужен список продуктов
+ * (импорт чека, карусель), открывал вторую подписку на тот же канал —
+ * приложение падало (backlog п. 7).
+ */
 export function useProducts(kitchenId: string) {
-  const queryClient = useQueryClient();
-  const isEcho = useUI((s) => s.isEcho);
-
-  const query = useQuery({
+  return useQuery({
     queryKey: qk.products(kitchenId),
     queryFn: () => repo.listProducts(kitchenId),
     enabled: Boolean(kitchenId),
   });
+}
+
+/** Подписка на изменения продуктов. Вызывать ровно в одном месте — на экране списка. */
+export function useProductsRealtime(kitchenId: string) {
+  const queryClient = useQueryClient();
+  const isEcho = useUI((s) => s.isEcho);
 
   useEffect(() => {
     // Кухня ещё не выбрана — подписываться не на что.
@@ -44,8 +53,6 @@ export function useProducts(kitchenId: string) {
     });
     return unsubscribe;
   }, [kitchenId, queryClient, isEcho]);
-
-  return query;
 }
 
 /**
@@ -77,12 +84,15 @@ export function useQueueFlusher(kitchenId: string) {
       }
     };
 
+    const onOnline = () => void run();
     void run();
-    const timer = setInterval(() => void run(), 15_000);
-    window.addEventListener('online', () => void run());
+    const timer = setInterval(onOnline, 15_000);
+    // Та же ссылка на функцию при снятии: иначе обработчики копились бы
+    // при каждом возвращении на экран списка
+    window.addEventListener('online', onOnline);
     return () => {
       clearInterval(timer);
-      window.removeEventListener('online', () => void run());
+      window.removeEventListener('online', onOnline);
     };
   }, [kitchenId, queryClient]);
 }
@@ -141,9 +151,29 @@ export function useSetQuantity(kitchenId: string) {
   return (id: string, quantity: number) => patch.mutate({ id, patch: { quantity } });
 }
 
-export function useRenameProduct(kitchenId: string) {
+/** Правка продукта из формы: название, категория, единица, картинка (backlog п. 11). */
+export function useUpdateProduct(kitchenId: string) {
   const patch = useOptimisticPatch(kitchenId);
-  return (id: string, name: string) => patch.mutate({ id, patch: { name } });
+  return (id: string, changes: ProductPatch) => patch.mutate({ id, patch: changes });
+}
+
+/** Отметить наличие сразу у нескольких продуктов — шаг «что из этого уже есть?». */
+export function useSetInStock(kitchenId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ ids, inStock }: { ids: string[]; inStock: boolean }) =>
+      repo.setInStock(ids, inStock),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: qk.products(kitchenId) }),
+  });
+}
+
+/** Пакетное создание. Ошибку показывает вызывающий экран — молчать нельзя (п. 1). */
+export function useCreateProducts(kitchenId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (inputs: NewProduct[]) => repo.createProducts(kitchenId, inputs),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: qk.products(kitchenId) }),
+  });
 }
 
 export function useCreateProduct(kitchenId: string) {

@@ -3,6 +3,7 @@ import { useSession } from '@/shared/hooks/useSession';
 import { ProductsScreen } from '@/features/products/ProductsScreen';
 import { QuickStartScreen } from '@/features/products/QuickStartScreen';
 import { DishesScreen } from '@/features/dishes/DishesScreen';
+import { DishQuickStartScreen } from '@/features/dishes/DishQuickStartScreen';
 import { SwipeScreen } from '@/features/swipe/SwipeScreen';
 import { SettingsScreen } from '@/features/settings/SettingsScreen';
 import { DeleteAccountScreen } from '@/features/settings/DeleteAccountScreen';
@@ -54,6 +55,7 @@ export const router = createBrowserRouter([
   },
   { path: '/today/choose', element: <RequireAuth><SwipeScreen /></RequireAuth> },
   { path: '/products/quick-start', element: <RequireAuth><QuickStartScreen /></RequireAuth> },
+  { path: '/dishes/quick-start', element: <RequireAuth><DishQuickStartScreen /></RequireAuth> },
   { path: '/settings/delete-account', element: <RequireAuth><DeleteAccountScreen /></RequireAuth> },
   { path: '/kitchens/:id', element: <RequireAuth><KitchenManageScreen /></RequireAuth> },
   { path: '*', element: <Navigate to="/products" replace /> },
