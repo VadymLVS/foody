@@ -66,6 +66,15 @@ export const PRODUCT_META: Record<string, { unit: Unit; category: string }> = {
   wine: { unit: 'pcs', category: 'drinks' },
   yeast: { unit: 'pack', category: 'pantry' },
   zucchini: { unit: 'kg', category: 'vegetables' },
+  // Продукты без блюда из готовых наборов (D-054)
+  sausages: { unit: 'pack', category: 'meat_fish' },
+  water: { unit: 'l', category: 'drinks' },
+  juice: { unit: 'l', category: 'drinks' },
+  coffee: { unit: 'pack', category: 'drinks' },
+  chips: { unit: 'pack', category: 'sweets' },
+  charcoal: { unit: 'pack', category: 'household' },
+  napkins: { unit: 'pack', category: 'household' },
+  disposable_tableware: { unit: 'pack', category: 'household' },
 };
 
 export interface LibraryDish {
@@ -184,4 +193,41 @@ export const DISH_LIBRARY: LibraryDish[] = [
   { key: 'apple_pie', category: 'baking', ingredients: [
     ['apple', 0.8], ['flour', 0.25], ['sugar', 0.15], ['eggs', 3], ['butter', 1],
   ] },
+];
+
+/**
+ * Готовые наборы (D-054). Правятся и удаляются как свои: при первом касании
+ * набор заводится в кухне, недостающие блюда и продукты создаются.
+ */
+export interface LibrarySet {
+  key: string;
+  dishes: string[];
+  /** Продукты без блюда: [ключ продукта, количество или null] */
+  products: Array<[string, number | null]>;
+}
+
+export const SET_LIBRARY: LibrarySet[] = [
+  {
+    key: 'light_week',
+    dishes: ['greek_salad', 'caprese', 'pumpkin_soup', 'broccoli_soup', 'baked_salmon', 'minestrone', 'ratatouille'],
+    products: [],
+  },
+  {
+    key: 'picnic',
+    dishes: ['greek_salad', 'caprese'],
+    products: [
+      ['sausages', 2], ['bread', 1], ['water', 3], ['juice', 2], ['chips', 2],
+      ['charcoal', 1], ['napkins', 1], ['disposable_tableware', 1],
+    ],
+  },
+  {
+    key: 'quick_dinners',
+    dishes: ['pasta_carbonara', 'shrimp_pasta', 'chicken_creamy_mushrooms', 'caesar_salad', 'tuna_salad'],
+    products: [],
+  },
+  {
+    key: 'breakfast_week',
+    dishes: ['omelette', 'pancakes', 'oatmeal_berries', 'french_toast', 'avocado_toast'],
+    products: [['coffee', 1], ['juice', 1]],
+  },
 ];

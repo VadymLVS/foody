@@ -58,7 +58,11 @@ export function SwipeScreen() {
           icon={<UtensilsCrossed className="h-12 w-12" />}
           title={cards.length === 0 ? t('swipe.emptyDeck') : t('swipe.deckDone')}
           description={chosen > 0 ? t('swipe.chosen', { count: chosen }) : undefined}
-          action={<Button onClick={() => navigate('/dishes')}>{t('dishes.title')}</Button>}
+          action={
+            chosen > 0
+              ? <Button onClick={() => navigate('/dishes?tab=planned')}>{t('dishes.doneSelecting', { count: chosen })}</Button>
+              : <Button onClick={() => navigate('/dishes')}>{t('dishes.title')}</Button>
+          }
         />
       </div>
     );
@@ -129,6 +133,15 @@ export function SwipeScreen() {
           </div>
         )}
       />
+
+      {/* Выход с сохранённым выбором — раньше был только «Закрыть» (п. 20) */}
+      <div className="mt-4 flex h-12 justify-center">
+        {chosen > 0 && (
+          <Button onClick={() => navigate('/dishes?tab=planned')}>
+            {t('dishes.doneSelecting', { count: chosen })}
+          </Button>
+        )}
+      </div>
     </div>
   );
 }

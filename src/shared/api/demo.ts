@@ -1,5 +1,5 @@
 import type { Category, DeckCard, DishIngredient, PlanNeedRow, Product, Unit } from '@/shared/db/types';
-import type { DishWithStatus, NewDish, NewProduct, ProductPatch, Repo, RealtimeEvent } from './repo';
+import type { DishSet, DishWithStatus, NewDish, NewProduct, ProductPatch, Repo, RealtimeEvent } from './repo';
 import { productLabel } from '@/shared/lib/i18n';
 
 /**
@@ -89,9 +89,24 @@ function seedProducts(): Product[] {
   }));
 }
 
+interface DemoSet {
+  id: string; name: string; lib: string | null; deleted: boolean;
+  dishIds: string[]; products: Array<{ productId: string; quantity: number | null }>;
+}
+
+/** Что применение набора сделало с продуктом — как planned_set_products в базе. */
+interface DemoPlannedSet {
+  id: string; setId: string; at: string;
+  changes: Array<{ productId: string; flipped: boolean; prev: number; added: number }>;
+}
+
 interface State {
   products: Product[]; favorites: string[]; planned: string[]; deletedDishes: string[];
   customDishes: DemoDish[];
+  sets: DemoSet[];
+  plannedSets: DemoPlannedSet[];
+  /** dishId → id применения набора, из которого блюдо попало в план. */
+  plannedFrom: Record<string, string>;
 }
 
 function load(): State {
@@ -99,12 +114,18 @@ function load(): State {
     const raw = localStorage.getItem(KEY);
     if (raw) return JSON.parse(raw) as State;
   } catch { /* приватный режим */ }
-  return { products: seedProducts(), favorites: ['d-3'], planned: ['d-5'], deletedDishes: [], customDishes: [] };
+  return {
+    products: seedProducts(), favorites: ['d-3'], planned: ['d-5'], deletedDishes: [], customDishes: [],
+    sets: [], plannedSets: [], plannedFrom: {},
+  };
 }
 
 const state: State = load();
 // Состояние из прежних версий демо не знает про свои блюда
 state.customDishes ??= [];
+state.sets ??= [];
+state.plannedSets ??= [];
+state.plannedFrom ??= {};
 
 function persist() {
   try { localStorage.setItem(KEY, JSON.stringify(state)); } catch { /* ignore */ }
@@ -129,6 +150,50 @@ function statusOf(dishId: string) {
 
 const allDishes = (): DemoDish[] => [...DISHES, ...state.customDishes];
 const activeDishes = () => allDishes().filter((d) => !state.deletedDishes.includes(d.id));
+
+function patchProduct(id: string, patch: Partial<Product>) {
+  state.products = state.products.map((p) =>
+    p.id === id ? { ...p, ...patch, updated_at: new Date().toISOString() } : p);
+  emit(id);
+}
+
+/** Снять применённый набор — зеркало remove_planned_set из 0006_dish_sets.sql. */
+function removePlannedSetNow(plannedSetId: string) {
+  const ps = state.plannedSets.find((p) => p.id === plannedSetId);
+  if (!ps) return;
+  const others = state.plannedSets.filter((p) => p.id !== plannedSetId);
+
+  // Блюдо, которое есть в другом применённом наборе, переходит к нему
+  for (const [dishId, from] of Object.entries(state.plannedFrom)) {
+    if (from !== plannedSetId) continue;
+    const other = others.find((o) => state.sets.find((s) => s.id === o.setId)?.dishIds.includes(dishId));
+    if (other) {
+      state.plannedFrom[dishId] = other.id;
+    } else {
+      state.planned = state.planned.filter((d) => d !== dishId);
+      delete state.plannedFrom[dishId];
+    }
+  }
+
+  for (const change of ps.changes) {
+    const product = state.products.find((p) => p.id === change.productId);
+    if (!product || product.in_stock) continue;          // уже куплено — не трогаем
+    const quantity = Math.max(product.quantity - change.added, 0);
+    if (!change.flipped) {
+      patchProduct(product.id, { quantity });
+      continue;
+    }
+    const heir = others.find((o) => o.changes.some((c) => c.productId === change.productId));
+    if (heir) {
+      heir.changes = heir.changes.map((c) =>
+        c.productId === change.productId ? { ...c, flipped: true, prev: change.prev } : c);
+      patchProduct(product.id, { quantity });
+    } else {
+      patchProduct(product.id, { in_stock: true, quantity: change.prev });
+    }
+  }
+  state.plannedSets = others;
+}
 
 export const demoRepo: Repo = {
   isDemo: true,
@@ -303,6 +368,100 @@ export const demoRepo: Repo = {
 
   async removeFromPlan(_k, dishId) {
     state.planned = state.planned.filter((p) => p !== dishId);
+    delete state.plannedFrom[dishId];
+    persist();
+  },
+
+  // ── Наборы: та же логика, что в 0006_dish_sets.sql ──
+  async listSets() {
+    await delay();
+    const liveProducts = new Map(state.products.filter((p) => !p.deleted_at).map((p) => [p.id, p]));
+    return {
+      usedLibraryKeys: state.sets.flatMap((s) => (s.lib ? [s.lib] : [])),
+      sets: state.sets.filter((s) => !s.deleted).map<DishSet>((s) => {
+        const planned = state.plannedSets.find((p) => p.setId === s.id);
+        return {
+          id: s.id, name: s.name, libraryKey: s.lib,
+          dishIds: s.dishIds.filter((id) => !state.deletedDishes.includes(id)),
+          products: s.products.flatMap((p) => {
+            const product = liveProducts.get(p.productId);
+            return product
+              ? [{ productId: p.productId, productName: product.name, unit: product.unit, quantity: p.quantity }]
+              : [];
+          }),
+          plannedSetId: planned?.id ?? null,
+          plannedAt: planned?.at ?? null,
+        };
+      }),
+    };
+  },
+
+  async saveSet(_k, input, id) {
+    await delay();
+    const setId = id ?? `s-${Date.now()}`;
+    const next: DemoSet = {
+      id: setId, name: input.name.trim(), lib: input.libraryKey ?? null, deleted: false,
+      dishIds: [...input.dishIds], products: input.products.map((p) => ({ ...p })),
+    };
+    const existing = state.sets.find((s) => s.id === setId);
+    state.sets = existing
+      ? state.sets.map((s) => (s.id === setId ? { ...next, lib: s.lib } : s))
+      : [...state.sets, next];
+    persist();
+    return setId;
+  },
+
+  async deleteSet(id) {
+    await delay();
+    state.sets = state.sets.map((s) => (s.id === id ? { ...s, deleted: true } : s));
+    persist();
+  },
+
+  async hideLibrarySet(_k, libraryKey) {
+    state.sets = [...state.sets, {
+      id: `s-${Date.now()}`, name: libraryKey, lib: libraryKey, deleted: true, dishIds: [], products: [],
+    }];
+    persist();
+  },
+
+  async applySet(setId) {
+    await delay();
+    const set = state.sets.find((s) => s.id === setId && !s.deleted);
+    if (!set || state.plannedSets.some((p) => p.setId === setId)) return;
+    const ps: DemoPlannedSet = { id: `ps-${Date.now()}`, setId, at: new Date().toISOString(), changes: [] };
+
+    for (const dishId of set.dishIds) {
+      if (state.deletedDishes.includes(dishId) || state.planned.includes(dishId)) continue;
+      state.planned = [...state.planned, dishId];
+      state.plannedFrom[dishId] = ps.id;
+    }
+    for (const item of set.products) {
+      const product = state.products.find((p) => p.id === item.productId && !p.deleted_at);
+      if (!product) continue;
+      const qty = item.quantity ?? 0;
+      if (product.in_stock) {
+        ps.changes.push({ productId: product.id, flipped: true, prev: product.quantity, added: qty });
+        patchProduct(product.id, { in_stock: false, quantity: qty });
+      } else {
+        ps.changes.push({ productId: product.id, flipped: false, prev: 0, added: qty });
+        patchProduct(product.id, { quantity: Math.min(product.quantity + qty, 100000) });
+      }
+    }
+    state.plannedSets = [...state.plannedSets, ps];
+    persist();
+  },
+
+  async removePlannedSet(plannedSetId) {
+    await delay();
+    removePlannedSetNow(plannedSetId);
+    persist();
+  },
+
+  async clearPlan() {
+    await delay();
+    for (const ps of [...state.plannedSets].reverse()) removePlannedSetNow(ps.id);
+    state.planned = [];
+    state.plannedFrom = {};
     persist();
   },
 

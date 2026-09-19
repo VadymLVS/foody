@@ -127,7 +127,8 @@ export function ProductRow({
         <span className="pointer-events-none relative z-[2] flex min-w-0 flex-1 flex-col justify-center gap-0.5 pr-3 text-left">
           <span className={cn('truncate text-body', product.in_stock ? 'text-text-primary' : 'text-[#8A8A8A]')}>
             {product.name}
-            {!need && product.in_stock && product.quantity > 0 && (
+            {/* Своё количество видно всегда: «сколько есть/брать» серым, «сколько нужно блюду» лаймом ниже (п. 22) */}
+            {product.quantity > 0 && (
               <span className="ml-1.5 text-micro text-text-muted">
                 {formatNumber(product.quantity)} {unitLabel(product.unit)}
               </span>

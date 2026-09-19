@@ -29,6 +29,16 @@ export default {
       },
       borderRadius: { sm: '8px', md: '12px', lg: '16px', tile: '6px' },
       spacing: { 13: '52px', 15: '60px' },
+      // Полоски «идёт запись» у голосового поиска (backlog п. 21)
+      keyframes: {
+        'voice-bar': {
+          '0%, 100%': { height: '4px' },
+          '50%': { height: '16px' },
+        },
+      },
+      animation: {
+        'voice-bar': 'voice-bar 0.9s ease-in-out infinite',
+      },
       transitionTimingFunction: {
         spring: 'cubic-bezier(0.34, 1.56, 0.64, 1)',
         ios: 'cubic-bezier(0.32, 0.72, 0, 1)',

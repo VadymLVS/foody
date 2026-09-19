@@ -1,6 +1,6 @@
 import { supabase, hasSupabaseCredentials } from './supabase';
 import type { Category, DeckCard, DishIngredient, PlanNeedRow, Product, Unit } from '@/shared/db/types';
-import type { DishWithStatus, NewDish, NewProduct, ProductPatch, Repo, RealtimeEvent } from './repo';
+import type { DishSet, DishWithStatus, NewDish, NewProduct, ProductPatch, Repo, RealtimeEvent } from './repo';
 import { productLabel } from '@/shared/lib/i18n';
 
 let cachedUserId = '';
@@ -188,7 +188,10 @@ export const supabaseRepo: Repo = {
       await supabase.from('dishes')
         .select('id, kitchen_id, name, category_id, image_path, library_key, image_w, image_h, deleted_at, dish_ingredients(id, dish_id, product_id, product_name, quantity)')
         .eq('kitchen_id', kitchenId)
-        .is('deleted_at', null),
+        .is('deleted_at', null)
+        // Стабильный порядок: без него кладка перестраивалась после каждого выбора (п. 17)
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true }),
     ) as Array<Omit<DishWithStatus, 'missingCount' | 'missingNames' | 'ingredients' | 'isFavorite' | 'isPlanned'>
       & { dish_ingredients: DishIngredient[] }>;
 
@@ -283,15 +286,123 @@ export const supabaseRepo: Repo = {
   },
 
   async addToPlan(kitchenId, dishId) {
+    // ignoreDuplicates: блюдо уже в плане (например, из набора) — оставляем как есть.
+    // Обычный upsert перезаписал бы строку и требовал бы политики на update.
     const { error } = await supabase.from('planned_dishes')
       .upsert({ kitchen_id: kitchenId, user_id: cachedUserId, dish_id: dishId },
-              { onConflict: 'kitchen_id,user_id,dish_id' });
+              { onConflict: 'kitchen_id,user_id,dish_id', ignoreDuplicates: true });
     if (error) throw new Error(error.message);
   },
 
   async removeFromPlan(kitchenId, dishId) {
     const { error } = await supabase.from('planned_dishes').delete()
       .eq('kitchen_id', kitchenId).eq('user_id', cachedUserId).eq('dish_id', dishId);
+    if (error) throw new Error(error.message);
+  },
+
+  async listSets(kitchenId) {
+    const rows = unwrap(
+      await supabase.from('dish_sets')
+        .select('id, name, library_key, deleted_at, dish_set_dishes(dish_id), dish_set_products(product_id, quantity, products(name, unit, deleted_at))')
+        .eq('kitchen_id', kitchenId)
+        .order('created_at', { ascending: true }),
+      // Связь «многие к одному» приходит объектом, а генератор типов считает её массивом
+    ) as unknown as Array<{
+      id: string; name: string; library_key: string | null; deleted_at: string | null;
+      dish_set_dishes: Array<{ dish_id: string }>;
+      dish_set_products: Array<{
+        product_id: string; quantity: number | null;
+        products: { name: string; unit: Unit; deleted_at: string | null } | null;
+      }>;
+    }>;
+
+    const planned = unwrap(
+      await supabase.from('planned_sets').select('id, set_id, created_at')
+        .eq('kitchen_id', kitchenId).eq('user_id', cachedUserId),
+    ) as Array<{ id: string; set_id: string; created_at: string }>;
+    const plannedBySet = new Map(planned.map((p) => [p.set_id, p]));
+
+    return {
+      usedLibraryKeys: rows.flatMap((r) => (r.library_key ? [r.library_key] : [])),
+      sets: rows.filter((r) => !r.deleted_at).map<DishSet>((r) => ({
+        id: r.id,
+        name: r.name,
+        libraryKey: r.library_key,
+        dishIds: r.dish_set_dishes.map((d) => d.dish_id),
+        products: r.dish_set_products
+          .filter((p) => p.products && !p.products.deleted_at)
+          .map((p) => ({
+            productId: p.product_id,
+            productName: p.products!.name,
+            unit: p.products!.unit,
+            quantity: p.quantity === null ? null : Number(p.quantity),
+          })),
+        plannedSetId: plannedBySet.get(r.id)?.id ?? null,
+        plannedAt: plannedBySet.get(r.id)?.created_at ?? null,
+      })),
+    };
+  },
+
+  async saveSet(kitchenId, input, id) {
+    let setId = id;
+    if (setId) {
+      const { error } = await supabase.from('dish_sets').update({ name: input.name.trim() }).eq('id', setId);
+      if (error) throw new Error(error.message);
+      // Состав заменяется целиком: так проще, чем сравнивать старое и новое
+      const d = await supabase.from('dish_set_dishes').delete().eq('set_id', setId);
+      if (d.error) throw new Error(d.error.message);
+      const p = await supabase.from('dish_set_products').delete().eq('set_id', setId);
+      if (p.error) throw new Error(p.error.message);
+    } else {
+      const created = unwrap(
+        await supabase.from('dish_sets').insert({
+          kitchen_id: kitchenId, name: input.name.trim(),
+          library_key: input.libraryKey ?? null, created_by: cachedUserId,
+        }).select('id').single(),
+      ) as { id: string };
+      setId = created.id;
+    }
+
+    if (input.dishIds.length > 0) {
+      const { error } = await supabase.from('dish_set_dishes')
+        .insert(input.dishIds.map((dishId) => ({ set_id: setId, dish_id: dishId })));
+      if (error) throw new Error(error.message);
+    }
+    if (input.products.length > 0) {
+      const { error } = await supabase.from('dish_set_products')
+        .insert(input.products.map((p) => ({ set_id: setId, product_id: p.productId, quantity: p.quantity })));
+      if (error) throw new Error(error.message);
+    }
+    return setId;
+  },
+
+  async deleteSet(id) {
+    const { error } = await supabase.from('dish_sets')
+      .update({ deleted_at: new Date().toISOString() }).eq('id', id);
+    if (error) throw new Error(error.message);
+  },
+
+  async hideLibrarySet(kitchenId, libraryKey) {
+    // Строка-заглушка с deleted_at: набор больше не предлагается из справочника
+    const { error } = await supabase.from('dish_sets').insert({
+      kitchen_id: kitchenId, name: libraryKey, library_key: libraryKey,
+      deleted_at: new Date().toISOString(), created_by: cachedUserId,
+    });
+    if (error) throw new Error(error.message);
+  },
+
+  async applySet(setId) {
+    const { error } = await supabase.rpc('apply_dish_set', { p_set: setId });
+    if (error) throw new Error(error.message);
+  },
+
+  async removePlannedSet(plannedSetId) {
+    const { error } = await supabase.rpc('remove_planned_set', { p_planned_set: plannedSetId });
+    if (error) throw new Error(error.message);
+  },
+
+  async clearPlan(kitchenId) {
+    const { error } = await supabase.rpc('clear_plan', { p_kitchen: kitchenId });
     if (error) throw new Error(error.message);
   },
 

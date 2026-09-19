@@ -9,5 +9,6 @@ export const qk = {
   deck:       (k: string) => ['deck', k] as const,
   planned:    (k: string) => ['planned', k] as const,
   planNeeds:  (k: string) => ['plan-needs', k] as const,
+  sets:       (k: string) => ['sets', k] as const,
   suggestions:['suggestions'] as const,
 };

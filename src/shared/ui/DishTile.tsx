@@ -28,7 +28,7 @@ interface Props {
  * в невыбранном состоянии медали нет, а не «прилетает» через соседнюю плитку.
  *
  * Левый край медали, ленты и названия стоят на одной вертикали:
- * 1.5px обводки плюс 10px внутреннего отступа.
+ * 0.5px обводки плюс 10px внутреннего отступа (backlog п. 18).
  */
 export function DishTile({ dish, selected, selectable, onClick }: Props) {
   /*
@@ -51,23 +51,29 @@ export function DishTile({ dish, selected, selectable, onClick }: Props) {
       }}
       className={cn(
         'relative mb-1.5 block w-full cursor-pointer break-inside-avoid rounded-tile',
-        'border-[1.5px] transition-colors duration-200',
+        'border-[0.5px] transition-colors duration-200',
         selected ? 'border-accent/70' : 'border-transparent',
       )}
     >
       {/* Обойма для ленты и медали: обрезает всё, что выше верхнего края */}
-      <span className="pointer-events-none absolute -left-[1.5px] -right-[1.5px] -top-[1.5px] z-[3] h-16 overflow-hidden rounded-t-tile">
+      <span className="pointer-events-none absolute -left-[0.5px] -right-[0.5px] -top-[0.5px] z-[3] h-16 overflow-hidden rounded-t-tile">
+        {/*
+         * Лента раскрывается сверху вниз через clip-path, а не scaleY:
+         * при масштабировании сжималась и её обводка, и лента «мигала» (backlog п. 17).
+         */}
         <span
           className={cn(
-            'absolute left-[11.5px] top-0 box-border h-[26px] w-[30px] origin-top',
-            'rounded-b-[12px] border-x-[1.5px] border-b-[1.5px] border-accent/70 bg-black',
-            'transition-transform duration-200 ease-out',
-            selected ? 'scale-y-100 delay-0' : 'scale-y-0 delay-100',
+            'absolute left-[10.5px] top-0 box-border h-[26px] w-[30px]',
+            'rounded-b-[12px] border-x-[0.5px] border-b-[0.5px] border-accent/70 bg-black',
+            'transition-[clip-path] duration-200 ease-out',
+            selected
+              ? '[clip-path:inset(0_0_0_0)] delay-0'
+              : '[clip-path:inset(0_0_100%_0)] delay-100',
           )}
         />
         <span
           className={cn(
-            'absolute left-[11.5px] top-[11px] leading-none transition-transform',
+            'absolute left-[10.5px] top-[11px] leading-none transition-transform',
             selected
               ? 'translate-y-0 duration-300 ease-spring delay-[60ms]'
               : '-translate-y-12 duration-200 ease-in',

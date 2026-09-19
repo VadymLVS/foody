@@ -16,7 +16,7 @@ import {
 } from '@/shared/hooks/useProducts';
 import { usePlanNeeds, usePlanned } from '@/shared/hooks/useDishes';
 import { useUI } from '@/shared/store/ui';
-import { searchByName, SEARCH_MIN_LENGTH } from '@/shared/lib/text';
+import { capitalize, multiSearch, SEARCH_MIN_LENGTH } from '@/shared/lib/text';
 import { categoryLabel, t } from '@/shared/lib/i18n';
 import { groupByCategory } from './grouping';
 import { AddProductModal } from './AddProductModal';
@@ -64,6 +64,11 @@ export function ProductsScreen() {
   const { remove, restore } = useDeleteProduct(kitchenId);
 
   const [addOpen, setAddOpen] = useState(false);
+  const [addName, setAddName] = useState('');
+  const openAdd = (name = '') => {
+    setAddName(name);
+    setAddOpen(true);
+  };
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [menuFor, setMenuFor] = useState<Product | null>(null);
@@ -97,16 +102,26 @@ export function ProductsScreen() {
     [categories],
   );
 
+  /*
+   * Поиск идёт по всем продуктам, мимо вкладки категории и фильтра статуса (п. 21):
+   * иначе «огурцы» на вкладке «Молочное» не находились, и предлагалось
+   * создать дубль. Фраза из нескольких продуктов разбирается на части.
+   */
+  const searchResult = useMemo(
+    () => (searching ? multiSearch(products, search) : null),
+    [searching, products, search],
+  );
+
   const visible = useMemo(() => {
+    if (searchResult) return searchResult.matches;
     let list = products;
     if (categoryFilter !== 'all') list = list.filter((p) => p.category_id === categoryFilter);
     const kept = (p: Product) => justToggled.has(p.id);
     if (statusFilter === 'plan') list = list.filter((p) => needByProduct.has(p.id) || kept(p));
     if (statusFilter === 'to-buy') list = list.filter((p) => !p.in_stock || kept(p));
     if (statusFilter === 'in-stock') list = list.filter((p) => p.in_stock || kept(p));
-    if (searching) return searchByName(list, search);
     return [...list].sort((a, b) => a.name.localeCompare(b.name, 'ru'));
-  }, [products, categoryFilter, statusFilter, search, searching, needByProduct, justToggled]);
+  }, [products, categoryFilter, statusFilter, searchResult, needByProduct, justToggled]);
 
   /*
    * Заголовки отделов показываем, только если они что-то дают:
@@ -146,18 +161,25 @@ export function ProductsScreen() {
     />
   );
 
+  /** «Создать» по каждой ненайденной части, а не всей фразой (п. 21). */
+  const renderCreateButtons = (names: string[]) => (
+    <div className="flex flex-wrap justify-center gap-2">
+      {names.map((name) => (
+        <Button key={name} size="sm" onClick={() => openAdd(capitalize(name))}>
+          {t('products.create', { name: capitalize(name) })}
+        </Button>
+      ))}
+    </div>
+  );
+
   /** Своё пустое состояние у каждого фильтра (backlog п. 13). */
   const renderEmpty = () => {
-    if (searching) {
+    if (searchResult) {
       return (
         <EmptyState
           icon={<SearchX className="h-12 w-12" />}
           title={t('products.notFound')}
-          action={
-            <Button onClick={() => setAddOpen(true)}>
-              {t('products.create', { name: search.trim() })}
-            </Button>
-          }
+          action={renderCreateButtons(searchResult.missing)}
         />
       );
     }
@@ -173,7 +195,7 @@ export function ProductsScreen() {
               <Button onClick={() => navigate('/products/quick-start')}>
                 {t('products.quickStart')}
               </Button>
-              <Button variant="ghost" size="sm" onClick={() => setAddOpen(true)}>
+              <Button variant="ghost" size="sm" onClick={() => openAdd()}>
                 {t('products.firstProduct')}
               </Button>
             </div>
@@ -208,7 +230,7 @@ export function ProductsScreen() {
       <EmptyState
         icon={<PackagePlus className="h-12 w-12" />}
         title={t('products.empty')}
-        action={<Button onClick={() => setAddOpen(true)}>{t('common.add')}</Button>}
+        action={<Button onClick={() => openAdd()}>{t('common.add')}</Button>}
       />
     );
   };
@@ -287,6 +309,20 @@ export function ProductsScreen() {
 
         {!groups && visible.map(renderRow)}
 
+        {/* Нашлось не всё из сказанного — недостающее можно создать тут же */}
+        {searchResult && visible.length > 0 && searchResult.missing.length > 0 && (
+          <section className="mt-4 px-0.5">
+            <h2 className="mb-2 text-micro text-text-dim">{t('products.notInList')}</h2>
+            <div className="flex flex-wrap gap-2">
+              {searchResult.missing.map((name) => (
+                <Button key={name} size="sm" variant="ghost" onClick={() => openAdd(capitalize(name))}>
+                  {t('products.create', { name: capitalize(name) })}
+                </Button>
+              ))}
+            </div>
+          </section>
+        )}
+
         {groups?.map((group) => (
           <section key={group.categoryId ?? 'none'} className="mb-4">
             <h2 className="mb-2 px-0.5 text-micro text-text-dim">{group.title}</h2>
@@ -304,7 +340,7 @@ export function ProductsScreen() {
         onClose={() => setAddMenuOpen(false)}
         actions={[
           { label: t('products.addFromList'), Icon: ListChecks, onClick: () => navigate('/products/quick-start') },
-          { label: t('products.addOwn'), Icon: PackagePlus, onClick: () => setAddOpen(true) },
+          { label: t('products.addOwn'), Icon: PackagePlus, onClick: () => openAdd() },
         ]}
       />
 
@@ -315,7 +351,7 @@ export function ProductsScreen() {
       <AddProductModal
         kitchenId={kitchenId}
         open={addOpen}
-        initialName={searching ? search.trim() : ''}
+        initialName={addName}
         existingNames={products.map((p) => p.name)}
         onClose={() => setAddOpen(false)}
       />
