@@ -3,9 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import { Check, ChevronRight, Plus, Users } from 'lucide-react';
 import { Button, Input, Modal, Toggle, useToast, BottomNav } from '@/shared/ui';
 import { auth } from '@/shared/api';
+import { resetAccountState } from '@/app/providers';
 import { useSession } from '@/shared/hooks/useSession';
 import { useCurrentKitchen, useKitchenActions, useKitchens } from '@/shared/hooks/useKitchens';
 import { useUI } from '@/shared/store/ui';
+import { useDiet } from '@/shared/hooks/useDiet';
 import { t } from '@/shared/lib/i18n';
 import { cn } from '@/shared/lib/cn';
 
@@ -18,6 +20,7 @@ export function SettingsScreen() {
   const setKitchen = useUI((s) => s.setKitchen);
   const showImages = useUI((s) => s.showRowImages);
   const playful = useUI((s) => s.playfulReactions);
+  const { data: diet } = useDiet();
   const setPreferences = useUI((s) => s.setPreferences);
   const { create } = useKitchenActions();
 
@@ -60,6 +63,15 @@ export function SettingsScreen() {
       </Block>
 
       <Block title="Отображение">
+        {/* Питание — у каждого своё, влияет на подсказки быстрого старта и наборов (п. 36) */}
+        <Row onClick={() => navigate('/settings/diet')}>
+          <span className="text-body">{t('diet.settingsRow')}</span>
+          <span className="flex items-center gap-1 text-caption text-text-muted">
+            {diet?.diet ? t(`diet.${diet.diet}` as 'diet.omnivore') : ''}
+            {diet && diet.excludes.length > 0 && ` · ${diet.excludes.length}`}
+            <ChevronRight className="h-5 w-5 shrink-0" />
+          </span>
+        </Row>
         <Row>
           <span className="text-body">{t('settings.showImages')}</span>
           <Toggle
@@ -86,6 +98,8 @@ export function SettingsScreen() {
         <Row
           onClick={async () => {
             await auth.signOut();
+            // Данные этого аккаунта не должны достаться следующему, кто войдёт
+            resetAccountState();
             navigate('/');
           }}
         >

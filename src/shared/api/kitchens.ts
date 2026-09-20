@@ -45,9 +45,18 @@ export function formatExpiry(iso: string | null): string {
 // ── Supabase ────────────────────────────────────────────────
 const supabaseKitchens: KitchensApi = {
   async list() {
+    /*
+     * Только свои строки членства. RLS отдаёт строки всех участников моих кухонь,
+     * и без фильтра кухня с двумя участниками приходила дважды, а роль могла
+     * оказаться чужой («вы владелец» у участника) — найдено 09-20.
+     */
+    const { data: auth } = await supabase.auth.getUser();
+    const userId = auth.user?.id;
+    if (!userId) return [];
     const { data, error } = await supabase
       .from('kitchen_members')
-      .select('role, kitchens(id, name, invite_code, invite_expires_at, invites_enabled)');
+      .select('role, kitchens(id, name, invite_code, invite_expires_at, invites_enabled)')
+      .eq('user_id', userId);
     if (error) throw new Error(error.message);
 
     const rows = (data ?? []) as unknown as Array<{
@@ -160,8 +169,18 @@ const supabaseKitchens: KitchensApi = {
 };
 
 // ── Демо ────────────────────────────────────────────────────
+/**
+ * Флаг «новый пользователь» для проверки первого входа в демо (п. 34):
+ * без него демо всегда подставляло кухню, и отсутствие кухни не ловилось.
+ */
+const DEMO_FRESH = 'pantrysync:demo:fresh-user';
+const demoFresh = () => {
+  try { return localStorage.getItem(DEMO_FRESH) === '1'; } catch { return false; }
+};
+
 const demoKitchens: KitchensApi = {
   async list() {
+    if (demoFresh()) return [];
     return [
       {
         id: DEMO_KITCHEN_ID,
@@ -174,7 +193,10 @@ const demoKitchens: KitchensApi = {
       },
     ];
   },
-  async create() { return DEMO_KITCHEN_ID; },
+  async create() {
+    try { localStorage.removeItem(DEMO_FRESH); } catch { /* приватный режим */ }
+    return DEMO_KITCHEN_ID;
+  },
   async rename() {},
   async remove() {},
   async listMembers() {
@@ -185,16 +207,19 @@ const demoKitchens: KitchensApi = {
         profile: { id: 'demo-user', email: 'you@example.com', full_name: 'Вы', avatar_url: null },
       },
       {
-        kitchen_id: DEMO_KITCHEN_ID, user_id: 'demo-arina', role: 'member',
+        kitchen_id: DEMO_KITCHEN_ID, user_id: 'demo-alina', role: 'member',
         joined_at: new Date().toISOString(),
-        profile: { id: 'demo-arina', email: 'arina@example.com', full_name: 'Арина', avatar_url: null },
+        profile: { id: 'demo-alina', email: 'alina@example.com', full_name: 'Алина', avatar_url: null },
       },
     ];
   },
   async removeMember() {},
   async leave() {},
   async peekInvite() { return { kitchenName: 'Дом', ownerName: 'Вы' }; },
-  async join() { return DEMO_KITCHEN_ID; },
+  async join() {
+    try { localStorage.removeItem(DEMO_FRESH); } catch { /* приватный режим */ }
+    return DEMO_KITCHEN_ID;
+  },
   async regenerateInvite() { return 'demo-invite-code'; },
 };
 

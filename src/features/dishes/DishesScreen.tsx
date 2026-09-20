@@ -5,13 +5,14 @@ import {
   ListChecks, ChefHat, Sparkles, Layers, X, Eraser, BookmarkPlus,
 } from 'lucide-react';
 import {
-  ActionSheet, Button, DishTile, EmptyState, SearchField, Tabs, useToast, BottomNav,
+  ActionSheet, Button, DishTile, EmptyState, FilterPills, SearchField, Tabs, useToast, BottomNav,
 } from '@/shared/ui';
 import { useCurrentKitchen } from '@/shared/hooks/useKitchens';
 import { useDishes, usePlanActions } from '@/shared/hooks/useDishes';
 import { useCategories, useToggleProduct } from '@/shared/hooks/useProducts';
 import { searchByName } from '@/shared/lib/text';
 import { categoryLabel, t } from '@/shared/lib/i18n';
+import { cn } from '@/shared/lib/cn';
 import {
   useApplySet, useClearPlan, useDeleteSet, useMaterializeSet, useRemovePlannedSet, useSets,
 } from '@/shared/hooks/useSets';
@@ -29,7 +30,8 @@ interface EditorState {
   initialDishIds?: string[];
 }
 
-const TABS_FROM_URL = new Set(['planned', 'sets']);
+type Mode = 'dishes' | 'sets';
+type Status = 'all' | 'planned' | 'ready' | 'fav';
 
 /** Иконка по категории — вместо цветной заливки на плитках без фото. */
 const CATEGORY_ICON: Record<string, React.ReactNode> = {
@@ -53,12 +55,26 @@ export function DishesScreen() {
 
   // ?tab=planned — сюда ведут «Готово» из карусели и из режима выбора (п. 19–20)
   const [params] = useSearchParams();
-  const [tab, setTab] = useState(() => {
-    const fromUrl = params.get('tab') ?? '';
-    return TABS_FROM_URL.has(fromUrl) ? fromUrl : 'all';
-  });
+  /*
+   * Три уровня, как в «Продуктах» (п. 24): раздел «Блюда | Наборы» →
+   * тип блюда (вкладки) → состояние (пилюли). Раньше всё было одним рядом,
+   * и «Готовим», «Готово», «Супы» стояли на равных.
+   */
+  const [mode, setMode] = useState<Mode>(params.get('tab') === 'sets' ? 'sets' : 'dishes');
+  const [category, setCategory] = useState('all');
+  const [status, setStatus] = useState<Status>(params.get('tab') === 'planned' ? 'planned' : 'all');
+  const isSets = mode === 'sets';
+  const isPlannedView = !isSets && status === 'planned';
+  const showPlanned = () => {
+    setMode('dishes');
+    setStatus('planned');
+  };
   const [search, setSearch] = useState('');
-  const [detail, setDetail] = useState<DishWithStatus | null>(null);
+  // Храним id, а блюдо берём из свежего списка: после правки карточка сразу показывает новое
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const detail = dishes.find((d) => d.id === detailId) ?? null;
+  const setDetail = (d: DishWithStatus | null) => setDetailId(d?.id ?? null);
+  const [editDish, setEditDish] = useState<DishWithStatus | null>(null);
   // «Выбрать блюда» из пустого фильтра «Для плана» открывает сразу режим выбора
   const [selecting, setSelecting] = useState(params.get('select') === '1');
   const [addMenuOpen, setAddMenuOpen] = useState(false);
@@ -102,7 +118,7 @@ export function DishesScreen() {
       onSuccess: (newProducts) => {
         toast.show(t('sets.applied', { name: view.name }));
         setSheet(null);
-        setTab('planned');
+        showPlanned();
         if (newProducts.length > 0) setCreated(newProducts);
       },
       onError: failed,
@@ -162,21 +178,22 @@ export function DishesScreen() {
 
   const visible = useMemo(() => {
     let list = dishes;
-    if (tab === 'planned') list = list.filter((d) => d.isPlanned);
-    else if (tab === 'ready') list = list.filter((d) => d.missingCount === 0);
-    else if (tab === 'fav') list = list.filter((d) => d.isFavorite);
-    else if (tab !== 'all') list = list.filter((d) => d.category_id === tab);
+    if (category !== 'all') list = list.filter((d) => d.category_id === category);
+    if (status === 'planned') list = list.filter((d) => d.isPlanned);
+    else if (status === 'ready') list = list.filter((d) => d.missingCount === 0);
+    else if (status === 'fav') list = list.filter((d) => d.isFavorite);
     return searchByName(list, search);
-  }, [dishes, tab, search]);
+  }, [dishes, category, status, search]);
 
   // Выбирают из всех блюд: на вкладке «Готовим» снятая плитка исчезала бы из-под пальца
   const startSelecting = () => {
     setSelecting(true);
-    if (tab === 'planned' || tab === 'sets') setTab('all');
+    setMode('dishes');
+    if (status === 'planned') setStatus('all');
   };
   const finishSelecting = () => {
     setSelecting(false);
-    setTab('planned');
+    showPlanned();
   };
 
   const togglePlan = (dish: DishWithStatus) => {
@@ -224,31 +241,69 @@ export function DishesScreen() {
         )}
       </header>
 
-      <div className="mb-4">
-        <SearchField value={search} onChange={setSearch} placeholder={t('dishes.search')} withVoice={false} />
+      {/* Раздел: блюда или наборы. Наборы — отдельный список, фильтры блюд к ним не относятся */}
+      <div className="mb-4 flex rounded-full bg-surface p-1" role="group" aria-label={t('dishes.section')}>
+        {(['dishes', 'sets'] as const).map((m) => (
+          <button
+            key={m}
+            type="button"
+            aria-pressed={mode === m}
+            onClick={() => {
+              setMode(m);
+              if (m === 'sets') setSelecting(false);
+            }}
+            className={cn(
+              'h-10 flex-1 rounded-full text-body transition-colors',
+              mode === m ? 'bg-surface-2 text-text-primary' : 'text-text-muted',
+            )}
+          >
+            {m === 'dishes' ? t('dishes.title') : t('sets.tab')}
+          </button>
+        ))}
       </div>
 
       <div className="mb-4">
-        <Tabs
-          active={tab}
-          onChange={setTab}
-          items={[
-            { id: 'all', label: t('dishes.all') },
-            // План — отдельной вкладкой, а не медалями поверх «Все» (п. 19)
-            { id: 'planned', label: plannedCount > 0 ? t('dishes.planned', { count: plannedCount }) : t('dishes.plannedTab') },
-            { id: 'sets', label: t('sets.tab') },
-            { id: 'ready', label: `${t('dishes.ready')} ${readyCount}` },
-            { id: 'fav', label: t('dishes.favorites') },
-            ...dishCategories.map((c) => ({ id: c.id, label: categoryLabel('dish', c.key, c.name) })),
-          ]}
+        <SearchField
+          value={search}
+          onChange={setSearch}
+          placeholder={isSets ? t('sets.search') : t('dishes.search')}
+          withVoice={false}
         />
       </div>
+
+      {!isSets && (
+        <>
+          <div className="mb-3">
+            <Tabs
+              active={category}
+              onChange={setCategory}
+              items={[
+                { id: 'all', label: t('dishes.all') },
+                ...dishCategories.map((c) => ({ id: c.id, label: categoryLabel('dish', c.key, c.name) })),
+              ]}
+            />
+          </div>
+          <div className="mb-4">
+            <FilterPills
+              active={status}
+              onChange={(id) => setStatus(id as Status)}
+              items={[
+                { id: 'all', label: t('dishes.all') },
+                { id: 'planned', label: plannedCount > 0 ? t('dishes.planned', { count: plannedCount }) : t('dishes.plannedTab') },
+                // «Готово» читалось как «блюдо уже приготовлено» (п. 24)
+                { id: 'ready', label: readyCount > 0 ? t('dishes.readyCount', { count: readyCount }) : t('dishes.ready') },
+                { id: 'fav', label: t('dishes.favorites') },
+              ]}
+            />
+          </div>
+        </>
+      )}
 
       <main className="pb-28">
         {isLoading && <p className="py-12 text-center text-caption text-text-muted">{t('common.loading')}</p>}
 
         {/* Наборы — свой список вместо сетки блюд */}
-        {tab === 'sets' && (
+        {isSets && (
           <SetsList
             sets={sets}
             library={library}
@@ -260,7 +315,7 @@ export function DishesScreen() {
         )}
 
         {/* Применённые наборы и действия с планом целиком */}
-        {tab === 'planned' && (activeSets.length > 0 || plannedCount > 0) && (
+        {isPlannedView && (activeSets.length > 0 || plannedCount > 0) && (
           <div className="mb-3">
             {activeSets.length > 0 && (
               <div className="mb-2 flex flex-wrap gap-1.5">
@@ -307,7 +362,7 @@ export function DishesScreen() {
         )}
 
         {/* Пустой раздел зовёт к действию: карусель — основной путь (backlog п. 4) */}
-        {!isLoading && tab !== 'sets' && dishes.length === 0 && (
+        {!isLoading && !isSets && dishes.length === 0 && (
           <EmptyState
             icon={<Sparkles className="h-12 w-12" />}
             title={t('dishes.nothingYet')}
@@ -323,8 +378,8 @@ export function DishesScreen() {
           />
         )}
 
-        {!isLoading && tab !== 'sets' && dishes.length > 0 && visible.length === 0 && (
-          tab === 'planned' && !search ? (
+        {!isLoading && !isSets && dishes.length > 0 && visible.length === 0 && (
+          isPlannedView && category === 'all' && !search ? (
             activeSets.length > 0 ? null : (
             <EmptyState
               icon={<UtensilsCrossed className="h-12 w-12" />}
@@ -333,7 +388,7 @@ export function DishesScreen() {
               action={
                 <div className="flex flex-col items-center gap-2">
                   <Button onClick={startSelecting}>{t('dishes.cook')}</Button>
-                  <Button variant="ghost" size="sm" onClick={() => setTab('sets')}>{t('sets.tab')}</Button>
+                  <Button variant="ghost" size="sm" onClick={() => setMode('sets')}>{t('sets.tab')}</Button>
                 </div>
               }
             />
@@ -344,7 +399,7 @@ export function DishesScreen() {
         )}
 
         <div className="columns-2 gap-1.5">
-          {tab !== 'sets' && visible.map((dish) => (
+          {!isSets && visible.map((dish) => (
             <DishTile
               key={dish.id}
               selectable={selecting}
@@ -420,16 +475,23 @@ export function DishesScreen() {
         onClose={() => setEditor(null)}
         onSaved={() => {
           toast.show(t('sets.saved'));
-          setTab('sets');
+          setMode('sets');
         }}
       />
 
       <CreateDishModal kitchenId={kitchenId} open={createOpen} onClose={() => setCreateOpen(false)} />
+      <CreateDishModal
+        kitchenId={kitchenId}
+        open={editDish !== null}
+        dish={editDish}
+        onClose={() => setEditDish(null)}
+      />
 
-      {detail && (
+      {detail && !editDish && (
         <DishDetail
           dish={detail}
           onClose={() => setDetail(null)}
+          onEdit={() => setEditDish(detail)}
           onToggleFavorite={() => favorite.mutate({ id: detail.id, next: !detail.isFavorite })}
           onCooked={(usedUpIds) => {
             for (const productId of usedUpIds) toggleProduct(productId, false);

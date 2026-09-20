@@ -29,6 +29,9 @@ interface Props {
  *
  * Левый край медали, ленты и названия стоят на одной вертикали:
  * 0.5px обводки плюс 10px внутреннего отступа (backlog п. 18).
+ *
+ * Внутренний блок скруглён на 6 − 0.5 = 5.5px и без своей рамки: раньше у заглушки
+ * была вторая рамка со скруглением 4px, и в углах две линии расходились (п. 28).
  */
 export function DishTile({ dish, selected, selectable, onClick }: Props) {
   /*
@@ -84,7 +87,7 @@ export function DishTile({ dish, selected, selectable, onClick }: Props) {
       </span>
 
       <div
-        className="relative overflow-hidden rounded-[4px] bg-surface-2"
+        className="relative overflow-hidden rounded-[5.5px] bg-surface-2"
         style={{ aspectRatio: dish.aspect ?? undefined, height }}
       >
         {imageUrl ? (
@@ -96,7 +99,7 @@ export function DishTile({ dish, selected, selectable, onClick }: Props) {
             className="h-full w-full object-cover"
           />
         ) : (
-          <div className="flex h-full w-full items-center justify-center border border-line">
+          <div className="flex h-full w-full items-center justify-center">
             {dish.categoryIcon ?? <Camera className="h-6 w-6 text-[#3E3E3E]" />}
           </div>
         )}

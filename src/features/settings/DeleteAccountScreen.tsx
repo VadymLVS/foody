@@ -4,6 +4,7 @@ import { AlertTriangle } from 'lucide-react';
 import { Button, Input } from '@/shared/ui';
 import { auth } from '@/shared/api';
 import { useKitchens } from '@/shared/hooks/useKitchens';
+import { resetAccountState } from '@/app/providers';
 
 const CONFIRM_WORD = 'УДАЛИТЬ';
 
@@ -26,6 +27,7 @@ export function DeleteAccountScreen() {
     setBusy(true);
     try {
       await auth.deleteAccount();
+      resetAccountState();
       navigate('/');
     } finally {
       setBusy(false);

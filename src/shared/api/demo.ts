@@ -1,6 +1,7 @@
 import type { Category, DeckCard, DishIngredient, PlanNeedRow, Product, Unit } from '@/shared/db/types';
 import type { DishSet, DishWithStatus, NewDish, NewProduct, ProductPatch, Repo, RealtimeEvent } from './repo';
 import { productLabel } from '@/shared/lib/i18n';
+import type { DietProfile } from '@/shared/lib/diet';
 
 /**
  * Демо-репозиторий. Включается сам при отсутствии ключей и переживает
@@ -53,10 +54,11 @@ type SeedIngredient = [productId: string | null, name: string, qty: number | nul
 interface DemoDish {
   id: string; name: string; cat: string | null; lib: string | null;
   w: number | null; h: number | null; ing: SeedIngredient[];
+  recipe?: string | null;
 }
 
 const DISHES: DemoDish[] = [
-  { id: 'd-1', name: 'Омлет', cat: 'dc-brk', lib: 'omlet', w: 1200, h: 1200,
+  { id: 'd-1', name: 'Омлет', cat: 'dc-brk', lib: 'omelette', w: 1200, h: 1200,
     ing: [['p-2', 'Яйца', 3], ['p-0', 'Молоко', 0.2], ['p-1', 'Сыр', 50]] },
   { id: 'd-2', name: 'Жареная картошка', cat: 'dc-main', lib: 'zharenaya_kartoshka', w: 1200, h: 900,
     ing: [['p-5', 'Картошка', 1], ['p-6', 'Лук', 0.2], ['p-16', 'Масло растительное', null]] },
@@ -107,6 +109,9 @@ interface State {
   plannedSets: DemoPlannedSet[];
   /** dishId → id применения набора, из которого блюдо попало в план. */
   plannedFrom: Record<string, string>;
+  diet: DietProfile;
+  /** Правки встроенных демо-блюд: состав, название, рецепт. */
+  dishEdits: Record<string, Partial<DemoDish>>;
 }
 
 function load(): State {
@@ -117,6 +122,7 @@ function load(): State {
   return {
     products: seedProducts(), favorites: ['d-3'], planned: ['d-5'], deletedDishes: [], customDishes: [],
     sets: [], plannedSets: [], plannedFrom: {},
+    diet: { diet: 'omnivore', excludes: [] }, dishEdits: {},
   };
 }
 
@@ -126,6 +132,9 @@ state.customDishes ??= [];
 state.sets ??= [];
 state.plannedSets ??= [];
 state.plannedFrom ??= {};
+// Демо — готовый пользователь: экран питания в нём не мешает сценариям
+state.diet ??= { diet: 'omnivore', excludes: [] };
+state.dishEdits ??= {};
 
 function persist() {
   try { localStorage.setItem(KEY, JSON.stringify(state)); } catch { /* ignore */ }
@@ -148,7 +157,8 @@ function statusOf(dishId: string) {
   return { missingCount: missing.length, missingNames: missing.map((m) => m.product_name) };
 }
 
-const allDishes = (): DemoDish[] => [...DISHES, ...state.customDishes];
+const allDishes = (): DemoDish[] =>
+  [...DISHES, ...state.customDishes].map((d) => ({ ...d, ...(state.dishEdits[d.id] ?? {}) }));
 const activeDishes = () => allDishes().filter((d) => !state.deletedDishes.includes(d.id));
 
 function patchProduct(id: string, patch: Partial<Product>) {
@@ -305,7 +315,7 @@ export const demoRepo: Repo = {
     return activeDishes().map<DishWithStatus>((d) => ({
       id: d.id, kitchen_id: kitchenId, name: d.name, category_id: d.cat,
       image_path: null, library_key: d.lib, image_w: d.w, image_h: d.h,
-      deleted_at: null, ingredients: ingredientsOf(d.id),
+      deleted_at: null, recipe: d.recipe ?? null, ingredients: ingredientsOf(d.id),
       isFavorite: state.favorites.includes(d.id),
       isPlanned: state.planned.includes(d.id),
       ...statusOf(d.id),
@@ -323,9 +333,35 @@ export const demoRepo: Repo = {
       w: null,
       h: null,
       ing: input.ingredients.map((i) => [i.productId, i.productName, i.quantity] as SeedIngredient),
+      recipe: input.recipe ?? null,
     }];
     persist();
     return id;
+  },
+
+  async updateDish(id, input: NewDish) {
+    await delay();
+    state.dishEdits[id] = {
+      name: input.name.trim(),
+      cat: input.categoryId,
+      recipe: input.recipe?.trim() || null,
+      ing: input.ingredients.map((i) => [i.productId, i.productName, i.quantity] as SeedIngredient),
+    };
+    persist();
+  },
+
+  async getDiet() {
+    // Новый пользователь демо ещё не отвечал про питание (проверка первого входа)
+    let fresh = false;
+    try { fresh = localStorage.getItem('pantrysync:demo:fresh-diet') === '1'; } catch { /* ignore */ }
+    if (fresh) return { diet: null, excludes: [] };
+    return { ...state.diet, excludes: [...state.diet.excludes] };
+  },
+
+  async saveDiet(profile) {
+    state.diet = { diet: profile.diet, excludes: [...profile.excludes] };
+    try { localStorage.removeItem('pantrysync:demo:fresh-diet'); } catch { /* ignore */ }
+    persist();
   },
 
   async deleteDish(id) {

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { UtensilsCrossed } from 'lucide-react';
 import { Button, EmptyState, SwipeDeck, type DeckItem } from '@/shared/ui';
 import { useCurrentKitchen } from '@/shared/hooks/useKitchens';
-import { useDeck, usePlanActions } from '@/shared/hooks/useDishes';
+import { useDeck, useDishes, usePlanActions } from '@/shared/hooks/useDishes';
 import { useUI } from '@/shared/store/ui';
 import { t } from '@/shared/lib/i18n';
 import { DECK_HUES } from '@/features/products/QuickStartScreen';
@@ -21,6 +21,8 @@ export function SwipeScreen() {
   const kitchenId = useCurrentKitchen()?.id ?? '';
   const navigate = useNavigate();
   const { data: cards = [], isLoading } = useDeck(kitchenId);
+  // Состав берём из списка блюд: колода отдаёт только недостающее
+  const { data: dishes = [] } = useDishes(kitchenId);
   const { add, remove } = usePlanActions(kitchenId);
   const playful = useUI((s) => s.playfulReactions);
 
@@ -71,9 +73,7 @@ export function SwipeScreen() {
   const items: DeckItem[] = cards.map((card, i) => ({
     id: card.dish_id,
     title: card.name,
-    subtitle: card.missing_count === 0
-      ? t('swipe.allSet')
-      : t('swipe.needToBuy', { names: card.missing_names.join(', ') }),
+    subtitle: composition(card.missing_names, dishes.find((d) => d.id === card.dish_id)?.ingredients ?? []),
     background: DECK_HUES[i % DECK_HUES.length]!,
     image: card.library_key ? `/library/dishes/${card.library_key}.webp` : null,
   }));
@@ -143,5 +143,29 @@ export function SwipeScreen() {
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * Весь состав блюда, недостающее — лаймом (п. 35). Раньше было только
+ * «нужно купить: …», и не было видно, из чего блюдо вообще состоит.
+ */
+function composition(missingNames: string[], ingredients: Array<{ id: string; product_name: string }>) {
+  const missing = new Set(missingNames);
+  if (ingredients.length === 0) {
+    return missingNames.length === 0 ? t('swipe.allSet') : t('swipe.needToBuy', { names: missingNames.join(', ') });
+  }
+  return (
+    <>
+      {ingredients.map((ing, i) => (
+        <span key={ing.id}>
+          {i > 0 && ', '}
+          <span className={missing.has(ing.product_name) ? 'text-accent' : undefined}>{ing.product_name}</span>
+        </span>
+      ))}
+      <span className="mt-1 block text-micro text-[#9A9A9A]">
+        {missingNames.length === 0 ? t('swipe.allSet') : t('swipe.missingHint', { count: missingNames.length })}
+      </span>
+    </>
   );
 }

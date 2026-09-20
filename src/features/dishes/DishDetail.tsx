@@ -1,11 +1,12 @@
-import { useState } from 'react';
-import { ChevronLeft, Star, Trash2 } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { ChevronLeft, Pencil, Star, Trash2 } from 'lucide-react';
 import { Button } from '@/shared/ui';
 import { useCurrentKitchen } from '@/shared/hooks/useKitchens';
-import { useToggleProduct } from '@/shared/hooks/useProducts';
+import { useProducts, useToggleProduct } from '@/shared/hooks/useProducts';
 import { formatNumber } from '@/shared/lib/text';
-import { t } from '@/shared/lib/i18n';
+import { t, unitLabel } from '@/shared/lib/i18n';
 import { cn } from '@/shared/lib/cn';
+import { recipeFor } from '@/shared/lib/dishRecipes';
 import type { DishWithStatus } from '@/shared/api/repo';
 import { CookedSheet } from './CookedSheet';
 
@@ -14,10 +15,11 @@ import { CookedSheet } from './CookedSheet';
  * без этого цепочка «хочу салат → купить огурцы» обрывается.
  */
 export function DishDetail({
-  dish, onClose, onToggleFavorite, onDelete, onCooked,
+  dish, onClose, onToggleFavorite, onDelete, onCooked, onEdit,
 }: {
   dish: DishWithStatus;
   onClose: () => void;
+  onEdit: () => void;
   onToggleFavorite: () => void;
   onDelete: () => void;
   onCooked: (usedUpProductIds: string[]) => void;
@@ -26,7 +28,13 @@ export function DishDetail({
   const kitchenId = useCurrentKitchen()?.id ?? '';
   const toggleProduct = useToggleProduct(kitchenId);
   const missing = new Set(dish.missingNames);
-  const image = dish.library_key ? `/library/dishes/${dish.library_key}.webp` : null;
+  const recipe = recipeFor(dish);
+  // Библиотека картинок пока пустая: битый снимок прячем, как в плитке (п. 29)
+  const [broken, setBroken] = useState(false);
+  const image = !broken && dish.library_key ? `/library/dishes/${dish.library_key}.webp` : null;
+  // Единица живёт у продукта (D-030), у ингредиента её нет
+  const { data: products = [] } = useProducts(kitchenId);
+  const unitOf = useMemo(() => new Map(products.map((p) => [p.id, p.unit])), [products]);
 
   const addAll = () => {
     for (const ingredient of dish.ingredients ?? []) {
@@ -44,24 +52,33 @@ export function DishDetail({
         role="dialog"
         aria-modal="true"
         aria-label={dish.name}
-        className="relative w-full max-w-[420px] overflow-hidden rounded-t-lg bg-black sm:rounded-lg"
+        className="relative max-h-[92dvh] w-full max-w-[420px] overflow-y-auto overscroll-contain rounded-t-lg bg-black sm:rounded-lg"
         style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
       >
         <div className="relative h-40 bg-surface-2">
-          {image && <img src={image} alt="" className="h-full w-full object-cover" />}
+          {image && (
+            <img src={image} alt="" onError={() => setBroken(true)} className="h-full w-full object-cover" />
+          )}
           <span
             className="absolute inset-0"
             style={{ background: 'linear-gradient(to top, rgba(0,0,0,.85) 0%, rgba(0,0,0,.4) 30%, rgba(0,0,0,0) 65%)' }}
           />
           <button type="button" onClick={onClose} aria-label={t('common.back')}
-            className="absolute left-3 top-3 text-white">
+            className="absolute left-1 top-1 flex h-11 w-11 items-center justify-center text-white">
             <ChevronLeft className="h-5 w-5" />
           </button>
-          <div className="absolute right-3 top-3 flex gap-3">
-            <button type="button" onClick={onToggleFavorite} aria-label="В избранное">
+          <div className="absolute right-1 top-1 flex">
+            {/* Правка блюда (п. 32) */}
+            <button type="button" onClick={onEdit} aria-label={t('dishes.edit')}
+              className="flex h-11 w-11 items-center justify-center">
+              <Pencil className="h-5 w-5 text-white" />
+            </button>
+            <button type="button" onClick={onToggleFavorite} aria-label="В избранное"
+              className="flex h-11 w-11 items-center justify-center">
               <Star className={cn('h-5 w-5', dish.isFavorite ? 'fill-accent text-accent' : 'text-white')} />
             </button>
-            <button type="button" onClick={onDelete} aria-label={t('common.delete')}>
+            <button type="button" onClick={onDelete} aria-label={t('common.delete')}
+              className="flex h-11 w-11 items-center justify-center">
               <Trash2 className="h-5 w-5 text-white" />
             </button>
           </div>
@@ -86,6 +103,8 @@ export function DishDetail({
                   {ingredient.quantity != null && (
                     <span className="ml-1.5 text-micro text-text-dim">
                       {formatNumber(ingredient.quantity)}
+                      {ingredient.product_id && unitOf.has(ingredient.product_id)
+                        && ` ${unitLabel(unitOf.get(ingredient.product_id)!)}`}
                     </span>
                   )}
                 </span>
@@ -93,6 +112,18 @@ export function DishDetail({
               </button>
             );
           })}
+
+          {/* Как готовить (п. 33): свой текст или рецепт справочника */}
+          {recipe ? (
+            <section className="mt-5">
+              <h3 className="mb-2 text-micro text-text-muted">{t('dishes.recipe')}</h3>
+              <p className="whitespace-pre-line text-body leading-relaxed text-text-primary">{recipe}</p>
+            </section>
+          ) : (
+            <button type="button" onClick={onEdit} className="mt-4 flex h-11 items-center text-caption text-accent">
+              + {t('dishes.recipe.add')}
+            </button>
+          )}
 
           <div className="mt-5 flex justify-center gap-2">
             {dish.missingCount > 0 && (

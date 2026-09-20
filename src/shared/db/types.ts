@@ -40,6 +40,8 @@ export interface Dish {
   image_path: string | null; library_key: string | null;
   image_w: number | null; image_h: number | null;
   deleted_at: string | null;
+  /** Текст «Как готовить» (п. 33). null — не заполнен. */
+  recipe?: string | null;
   ingredients?: DishIngredient[];
 }
 

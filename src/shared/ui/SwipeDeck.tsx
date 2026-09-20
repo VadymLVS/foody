@@ -20,7 +20,8 @@ const FLICK_MIN_PX = 24;
 export interface DeckItem {
   id: string;
   title: string;
-  subtitle?: string;
+  /** Строка или разметка: в карусели «Что едим» недостающее выделяется (п. 35). */
+  subtitle?: React.ReactNode;
   /** Фон карты — градиент. Виден всегда, пока нет снимка или он не загрузился. */
   background: string;
   /** Снимок поверх фона. Библиотека картинок пока пустая, поэтому 404 — норма. */
@@ -218,7 +219,7 @@ export function SwipeDeck({
               <div className="absolute inset-x-0 bottom-0 p-5">
                 <h2 className="font-display text-display text-white">{item.title}</h2>
                 {item.subtitle && (
-                  <p className="mt-2 text-micro text-[#C9C9C9]">{item.subtitle}</p>
+                  <p className="mt-2 text-caption leading-snug text-[#C9C9C9]">{item.subtitle}</p>
                 )}
               </div>
             </div>

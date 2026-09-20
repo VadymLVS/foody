@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { Sprout } from 'lucide-react';
 import { Button, Input } from '@/shared/ui';
 import { auth, authErrorMessage, hasSupabaseCredentials } from '@/shared/api';
+import { pendingInvite } from '@/features/onboarding/pendingInvite';
+import { resetAccountState } from '@/app/providers';
 
 type Mode = 'welcome' | 'signup' | 'signin';
 
@@ -28,7 +30,13 @@ export function AuthScreen() {
     try {
       if (mode === 'signup') await auth.signUp(email.trim(), password, name.trim());
       else await auth.signIn(email.trim(), password);
-      navigate('/products');
+      // Пришли по приглашению — сначала принять его (п. 31). Код читаем до сброса
+      const code = pendingInvite.get();
+      // Кэш прежнего аккаунта на этом устройстве — в сторону (найдено 09-20:
+      // после входа были видны кухня, продукты и блюда другого человека)
+      resetAccountState();
+      if (code) pendingInvite.set(code);
+      navigate(code ? `/join/${code}` : '/products');
     } catch (e) {
       setError(authErrorMessage(e instanceof Error ? e.message : ''));
     } finally {

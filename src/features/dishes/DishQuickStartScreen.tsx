@@ -8,6 +8,8 @@ import { dishLabel, productLabel, t } from '@/shared/lib/i18n';
 import { norm } from '@/shared/lib/text';
 import { DECK_HUES } from '@/features/products/QuickStartScreen';
 import { StockCheck } from '@/features/products/StockCheck';
+import { useForbidden } from '@/shared/hooks/useDiet';
+import { dishAllowed } from '@/shared/lib/diet';
 import type { Product } from '@/shared/db/types';
 
 /**
@@ -25,6 +27,8 @@ export function DishQuickStartScreen() {
 
   const { data: dishes = [], isSuccess: dishesReady } = useDishes(kitchenId);
   const addDishes = useAddLibraryDishes(kitchenId);
+  // Неподходящие по питанию блюда в колоду не попадают (п. 36)
+  const forbidden = useForbidden();
 
   const [deck, setDeck] = useState<DeckItem[] | null>(null);
   const [accepted, setAccepted] = useState<string[]>([]);
@@ -39,17 +43,19 @@ export function DishQuickStartScreen() {
     setDeck(
       DISH_LIBRARY
         .filter((d) => !have.has(d.key) && !have.has(norm(dishLabel(d.key))))
+        .filter((d) => dishAllowed(d.ingredients.map(([k]) => k), forbidden))
         .map((d, i) => {
           const names = d.ingredients.map(([key]) => productLabel(key, key));
           return {
             id: d.key,
             title: dishLabel(d.key),
-            subtitle: names.slice(0, 5).join(', ') + (names.length > 5 ? ` и ещё ${names.length - 5}` : ''),
+            // Весь состав, без «и ещё N» (п. 35): у блюд справочника до 8 позиций, место есть
+            subtitle: names.join(', '),
             background: DECK_HUES[i % DECK_HUES.length]!,
           };
         }),
     );
-  }, [deck, dishesReady, dishes]);
+  }, [deck, dishesReady, dishes, forbidden]);
 
   const save = () => {
     if (accepted.length === 0) {

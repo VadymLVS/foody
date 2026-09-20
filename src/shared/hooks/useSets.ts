@@ -2,21 +2,44 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { repo, qk } from '@/shared/api';
 import type { DishSet, DishSetInput } from '@/shared/api/repo';
 import type { Product } from '@/shared/db/types';
-import { SET_LIBRARY, type LibrarySet } from '@/shared/lib/dishLibrary';
+import { useMemo } from 'react';
+import { DISH_LIBRARY, SET_LIBRARY, type LibrarySet } from '@/shared/lib/dishLibrary';
+import { dishAllowed, productAllowed } from '@/shared/lib/diet';
+import { useForbidden } from './useDiet';
 import { setLabel } from '@/shared/lib/i18n';
 import { ensureLibraryItems } from './useDishes';
 
-/** Наборы кухни и готовые наборы, которые ещё не заводились (D-053, D-054). */
+/**
+ * Наборы кухни и готовые наборы, которые ещё не заводились (D-053, D-054).
+ *
+ * Готовые наборы подстраиваются под питание (п. 36): неподходящие блюда
+ * и продукты из них убираются, набор без подходящего содержимого не показывается.
+ * Свои наборы кухни не фильтруются — кухня общая.
+ */
 export function useSets(kitchenId: string) {
-  return useQuery({
+  const forbidden = useForbidden();
+  const query = useQuery({
     queryKey: qk.sets(kitchenId),
     queryFn: () => repo.listSets(kitchenId),
     enabled: Boolean(kitchenId),
-    select: (listing) => ({
-      sets: listing.sets,
-      library: SET_LIBRARY.filter((s) => !listing.usedLibraryKeys.includes(s.key)),
-    }),
   });
+  const data = useMemo(() => {
+    if (!query.data) return undefined;
+    const byKey = new Map(DISH_LIBRARY.map((d) => [d.key, d]));
+    const library = SET_LIBRARY
+      .filter((s) => !query.data.usedLibraryKeys.includes(s.key))
+      .map((s) => ({
+        ...s,
+        dishes: s.dishes.filter((key) => {
+          const dish = byKey.get(key);
+          return dish ? dishAllowed(dish.ingredients.map(([k]) => k), forbidden) : false;
+        }),
+        products: s.products.filter(([key]) => productAllowed(key, forbidden)),
+      }))
+      .filter((s) => s.dishes.length > 0 || s.products.length > 0);
+    return { sets: query.data.sets, library };
+  }, [query.data, forbidden]);
+  return { ...query, data };
 }
 
 /** Набор нужен сразу в нескольких местах: всё, что он меняет, обновляется разом. */

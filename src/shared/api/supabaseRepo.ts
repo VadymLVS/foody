@@ -2,6 +2,7 @@ import { supabase, hasSupabaseCredentials } from './supabase';
 import type { Category, DeckCard, DishIngredient, PlanNeedRow, Product, Unit } from '@/shared/db/types';
 import type { DishSet, DishWithStatus, NewDish, NewProduct, ProductPatch, Repo, RealtimeEvent } from './repo';
 import { productLabel } from '@/shared/lib/i18n';
+import type { DietProfile } from '@/shared/lib/diet';
 
 let cachedUserId = '';
 
@@ -186,7 +187,8 @@ export const supabaseRepo: Repo = {
   async listDishes(kitchenId) {
     const rows = unwrap(
       await supabase.from('dishes')
-        .select('id, kitchen_id, name, category_id, image_path, library_key, image_w, image_h, deleted_at, dish_ingredients(id, dish_id, product_id, product_name, quantity)')
+        // «*», а не список колонок: так запрос не падает, пока миграция 0007 (recipe) не выполнена
+        .select('*, dish_ingredients(id, dish_id, product_id, product_name, quantity)')
         .eq('kitchen_id', kitchenId)
         .is('deleted_at', null)
         // Стабильный порядок: без него кладка перестраивалась после каждого выбора (п. 17)
@@ -235,6 +237,8 @@ export const supabaseRepo: Repo = {
         category_id: input.categoryId,
         library_key: input.libraryKey ?? null,
         created_by: cachedUserId,
+        // Поле добавляется, только если заполнено: до миграции 0007 колонки нет
+        ...(input.recipe ? { recipe: input.recipe } : {}),
       }).select('id').single(),
     ) as { id: string };
 
@@ -254,6 +258,56 @@ export const supabaseRepo: Repo = {
       }
     }
     return dish.id;
+  },
+
+  async updateDish(id, input: NewDish) {
+    const { error } = await supabase.from('dishes').update({
+      name: input.name.trim(),
+      category_id: input.categoryId,
+      recipe: input.recipe?.trim() || null,
+    }).eq('id', id);
+    if (error) throw new Error(error.message);
+
+    // Состав заменяется целиком, как у наборов: проще и надёжнее, чем сравнивать
+    const del = await supabase.from('dish_ingredients').delete().eq('dish_id', id);
+    if (del.error) throw new Error(del.error.message);
+    if (input.ingredients.length > 0) {
+      const ins = await supabase.from('dish_ingredients').insert(
+        input.ingredients.map((ingredient) => ({
+          dish_id: id,
+          product_id: ingredient.productId,
+          product_name: ingredient.productName,
+          quantity: ingredient.quantity,
+        })),
+      );
+      if (ins.error) throw new Error(ins.error.message);
+    }
+  },
+
+  async getDiet() {
+    // id берём у самой сессии: cachedUserId при первом запросе ещё может быть пустым
+    const { data: auth } = await supabase.auth.getUser();
+    const userId = auth.user?.id;
+    if (!userId) return { diet: 'omnivore', excludes: [] };
+    const { data, error } = await supabase.from('user_settings')
+      .select('diet, diet_excludes').eq('user_id', userId).maybeSingle();
+    if (error) {
+      // До миграции 0007 колонок нет — считаем, что ответ уже дан, иначе экран
+      // «Что вы едите?» показывался бы при каждом запуске
+      if (/diet/i.test(error.message)) return { diet: 'omnivore', excludes: [] };
+      throw new Error(error.message);
+    }
+    const row = data as { diet: DietProfile['diet']; diet_excludes: DietProfile['excludes'] } | null;
+    return { diet: row?.diet ?? null, excludes: row?.diet_excludes ?? [] };
+  },
+
+  async saveDiet(profile) {
+    const { data: auth } = await supabase.auth.getUser();
+    const userId = auth.user?.id;
+    if (!userId) throw new Error('unauthorized');
+    const { error } = await supabase.from('user_settings')
+      .update({ diet: profile.diet, diet_excludes: profile.excludes }).eq('user_id', userId);
+    if (error) throw new Error(error.message);
   },
 
   async deleteDish(id) {

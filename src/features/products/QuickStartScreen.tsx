@@ -8,6 +8,8 @@ import {
 import { norm } from '@/shared/lib/text';
 import { t } from '@/shared/lib/i18n';
 import { StockCheck } from './StockCheck';
+import { useForbidden } from '@/shared/hooks/useDiet';
+import { productAllowed } from '@/shared/lib/diet';
 import type { NewProduct } from '@/shared/api/repo';
 import type { Product, Unit } from '@/shared/db/types';
 
@@ -44,6 +46,8 @@ export function QuickStartScreen() {
   const { data: products = [], isSuccess: productsReady } = useProducts(kitchenId);
   const { data: categories = [] } = useCategories(kitchenId);
   const createProducts = useCreateProducts(kitchenId);
+  // Неподходящее по питанию в колоду не попадает (п. 36)
+  const forbidden = useForbidden();
 
   const [deck, setDeck] = useState<DeckItem[] | null>(null);
   const [accepted, setAccepted] = useState<Pick[]>([]);
@@ -61,10 +65,10 @@ export function QuickStartScreen() {
     const have = new Set(products.map((p) => norm(p.name)));
     setDeck(
       suggestions
-        .filter((s) => !have.has(norm(s.name)))
+        .filter((s) => !have.has(norm(s.name)) && productAllowed(s.key, forbidden))
         .map((s, i) => ({ id: s.key, title: s.name, background: DECK_HUES[i % DECK_HUES.length]! })),
     );
-  }, [deck, suggestionsReady, productsReady, suggestions, products]);
+  }, [deck, suggestionsReady, productsReady, suggestions, products, forbidden]);
 
   const byKey = useMemo(
     () => new Map(suggestions.map((s) => [s.key, s as Pick])),

@@ -1,4 +1,5 @@
 import type { Category, DeckCard, Dish, PlanNeedRow, Product, Unit } from '@/shared/db/types';
+import type { DietProfile } from '@/shared/lib/diet';
 
 export interface NewProduct {
   name: string;
@@ -26,6 +27,8 @@ export interface NewDish {
   name: string;
   categoryId: string | null;
   libraryKey?: string | null;
+  /** Текст «Как готовить» (п. 33). */
+  recipe?: string | null;
   ingredients: NewIngredient[];
 }
 
@@ -99,6 +102,8 @@ export interface Repo {
 
   listDishes(kitchenId: string): Promise<DishWithStatus[]>;
   createDish(kitchenId: string, input: NewDish): Promise<string>;
+  /** Правка блюда: название, категория, рецепт; состав заменяется целиком (п. 32). */
+  updateDish(id: string, input: NewDish): Promise<void>;
   deleteDish(id: string): Promise<void>;
   toggleFavorite(dishId: string, next: boolean): Promise<void>;
 
@@ -122,6 +127,10 @@ export interface Repo {
   removePlannedSet(plannedSetId: string): Promise<void>;
   /** Снять все свои наборы и блюда. */
   clearPlan(kitchenId: string): Promise<void>;
+
+  /** Питание текущего человека (п. 36). */
+  getDiet(): Promise<DietProfile>;
+  saveDiet(profile: DietProfile): Promise<void>;
 
   /** Потребности по плану, сложенные по всем участникам (D-031). */
   planNeeds(kitchenId: string): Promise<PlanNeedRow[]>;

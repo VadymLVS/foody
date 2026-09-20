@@ -196,6 +196,19 @@ export function useAddLibraryDishes(kitchenId: string) {
   });
 }
 
+/** Правка блюда (п. 32): план и «Для плана» пересчитываются из нового состава. */
+export function useUpdateDish(kitchenId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, input }: { id: string; input: NewDish }) => repo.updateDish(id, input),
+    onSettled: () => {
+      for (const key of [qk.dishes(kitchenId), qk.deck(kitchenId), qk.planNeeds(kitchenId), qk.sets(kitchenId)]) {
+        void qc.invalidateQueries({ queryKey: key });
+      }
+    },
+  });
+}
+
 /** Своё блюдо из формы. */
 export function useCreateDish(kitchenId: string) {
   const qc = useQueryClient();

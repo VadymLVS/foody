@@ -10,6 +10,9 @@ import { DeleteAccountScreen } from '@/features/settings/DeleteAccountScreen';
 import { KitchenManageScreen } from '@/features/kitchens/KitchenManageScreen';
 import { AuthScreen } from '@/features/auth/AuthScreen';
 import { JoinScreen } from '@/features/auth/JoinScreen';
+import { FirstRunGate } from '@/features/onboarding/FirstRunGate';
+import { DietScreen } from '@/features/onboarding/DietScreen';
+import { pendingInvite } from '@/features/onboarding/pendingInvite';
 
 /** Пока сессия неизвестна — не решаем: иначе вошедший на миг увидит вход. */
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -17,13 +20,18 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   if (loading) return null;
   if (!session) return <Navigate to="/" replace state={{ from: location.pathname }} />;
-  return <>{children}</>;
+  // Без кухни и без ответа про питание экраны приложения не открываются (п. 34, 36)
+  return <FirstRunGate>{children}</FirstRunGate>;
 }
 
 function GuestOnly({ children }: { children: React.ReactNode }) {
   const { session, loading } = useSession();
   if (loading) return null;
-  if (session) return <Navigate to="/products" replace />;
+  if (session) {
+    // Вошли со страницы приглашения — возвращаем туда, а не в список (п. 31)
+    const code = pendingInvite.get();
+    return <Navigate to={code ? `/join/${code}` : '/products'} replace />;
+  }
   return <>{children}</>;
 }
 
@@ -56,6 +64,7 @@ export const router = createBrowserRouter([
   { path: '/today/choose', element: <RequireAuth><SwipeScreen /></RequireAuth> },
   { path: '/products/quick-start', element: <RequireAuth><QuickStartScreen /></RequireAuth> },
   { path: '/dishes/quick-start', element: <RequireAuth><DishQuickStartScreen /></RequireAuth> },
+  { path: '/settings/diet', element: <RequireAuth><DietScreen mode="settings" /></RequireAuth> },
   { path: '/settings/delete-account', element: <RequireAuth><DeleteAccountScreen /></RequireAuth> },
   { path: '/kitchens/:id', element: <RequireAuth><KitchenManageScreen /></RequireAuth> },
   { path: '*', element: <Navigate to="/products" replace /> },
