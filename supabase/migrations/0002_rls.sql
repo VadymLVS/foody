@@ -1,4 +1,5 @@
 -- PantrySync · RLS. См. docs/04-security.md §3
+-- Повторный запуск безопасен: файл идемпотентен (обзор 09-26, R-3).
 -- Правила: RLS на каждой таблице; никаких `for all`;
 -- у каждой пишущей политики есть with check.
 
@@ -32,26 +33,33 @@ alter table planned_dishes      enable row level security;
 alter table product_suggestions enable row level security;
 
 -- ── profiles ──────────────────────────────────────────────
+drop policy if exists profiles_select_self on profiles;
 create policy profiles_select_self on profiles for select using (id = auth.uid());
 
-create policy profiles_select_cokitchen on profiles for select
-  using (exists (select 1 from kitchen_members m1
-                 join kitchen_members m2 on m1.kitchen_id = m2.kitchen_id
-                 where m1.user_id = auth.uid() and m2.user_id = profiles.id));
+-- Профиль читает только сам человек. Соседей по кухне отдаёт
+-- public.kitchen_people() из 0008 — без адресов почты (обзор 09-26, B-6).
+drop policy if exists profiles_select_cokitchen on profiles;
 
+drop policy if exists profiles_update_self on profiles;
 create policy profiles_update_self on profiles for update
   using (id = auth.uid()) with check (id = auth.uid());
 
 -- ── user_settings ─────────────────────────────────────────
+drop policy if exists settings_select on user_settings;
 create policy settings_select on user_settings for select using (user_id = auth.uid());
+drop policy if exists settings_insert on user_settings;
 create policy settings_insert on user_settings for insert with check (user_id = auth.uid());
+drop policy if exists settings_update on user_settings;
 create policy settings_update on user_settings for update
   using (user_id = auth.uid()) with check (user_id = auth.uid());
 
 -- ── kitchens (INSERT только через create_kitchen) ─────────
+drop policy if exists kitchens_select on kitchens;
 create policy kitchens_select on kitchens for select using (public.is_kitchen_member(id));
+drop policy if exists kitchens_update on kitchens;
 create policy kitchens_update on kitchens for update
   using (public.is_kitchen_member(id)) with check (public.is_kitchen_member(id));
+drop policy if exists kitchens_delete on kitchens;
 create policy kitchens_delete on kitchens for delete using (public.is_kitchen_owner(id));
 
 -- owner_id меняется только через transfer_ownership()
@@ -65,70 +73,96 @@ begin
   return new;
 end;
 $$;
+drop trigger if exists t_kitchens_guard_owner on kitchens;
 create trigger t_kitchens_guard_owner before update on kitchens
   for each row execute function public.guard_kitchen_owner();
 
 -- ── kitchen_members (INSERT/UPDATE запрещены: T-2) ────────
+drop policy if exists members_select on kitchen_members;
 create policy members_select on kitchen_members for select
   using (public.is_kitchen_member(kitchen_id));
+drop policy if exists members_delete on kitchen_members;
 create policy members_delete on kitchen_members for delete
   using (user_id = auth.uid() or public.is_kitchen_owner(kitchen_id));
 
 -- ── categories ────────────────────────────────────────────
+drop policy if exists categories_select on categories;
 create policy categories_select on categories for select
   using (kitchen_id is null or public.is_kitchen_member(kitchen_id));
+drop policy if exists categories_insert on categories;
 create policy categories_insert on categories for insert
   with check (kitchen_id is not null and public.is_kitchen_member(kitchen_id));
+drop policy if exists categories_update on categories;
 create policy categories_update on categories for update
   using (kitchen_id is not null and public.is_kitchen_member(kitchen_id))
   with check (kitchen_id is not null and public.is_kitchen_member(kitchen_id));
+drop policy if exists categories_delete on categories;
 create policy categories_delete on categories for delete
   using (kitchen_id is not null and public.is_kitchen_member(kitchen_id));
 
 -- ── products ──────────────────────────────────────────────
+drop policy if exists products_select on products;
 create policy products_select on products for select
   using (public.is_kitchen_member(kitchen_id));
+drop policy if exists products_insert on products;
 create policy products_insert on products for insert
   with check (public.is_kitchen_member(kitchen_id) and created_by = auth.uid() and deleted_at is null);
+drop policy if exists products_update on products;
 create policy products_update on products for update
   using (public.is_kitchen_member(kitchen_id))
   with check (public.is_kitchen_member(kitchen_id) and updated_by = auth.uid());
+drop policy if exists products_delete on products;
 create policy products_delete on products for delete
   using (public.is_kitchen_member(kitchen_id));
 
 -- ── dishes ────────────────────────────────────────────────
+drop policy if exists dishes_select on dishes;
 create policy dishes_select on dishes for select using (public.is_kitchen_member(kitchen_id));
+drop policy if exists dishes_insert on dishes;
 create policy dishes_insert on dishes for insert
   with check (public.is_kitchen_member(kitchen_id) and created_by = auth.uid());
+drop policy if exists dishes_update on dishes;
 create policy dishes_update on dishes for update
   using (public.is_kitchen_member(kitchen_id)) with check (public.is_kitchen_member(kitchen_id));
+drop policy if exists dishes_delete on dishes;
 create policy dishes_delete on dishes for delete using (public.is_kitchen_member(kitchen_id));
 
 -- ── dish_ingredients ──────────────────────────────────────
+drop policy if exists ingredients_select on dish_ingredients;
 create policy ingredients_select on dish_ingredients for select
   using (exists (select 1 from dishes d where d.id = dish_id and public.is_kitchen_member(d.kitchen_id)));
+drop policy if exists ingredients_insert on dish_ingredients;
 create policy ingredients_insert on dish_ingredients for insert
   with check (exists (select 1 from dishes d where d.id = dish_id and public.is_kitchen_member(d.kitchen_id)));
+drop policy if exists ingredients_update on dish_ingredients;
 create policy ingredients_update on dish_ingredients for update
   using (exists (select 1 from dishes d where d.id = dish_id and public.is_kitchen_member(d.kitchen_id)))
   with check (exists (select 1 from dishes d where d.id = dish_id and public.is_kitchen_member(d.kitchen_id)));
+drop policy if exists ingredients_delete on dish_ingredients;
 create policy ingredients_delete on dish_ingredients for delete
   using (exists (select 1 from dishes d where d.id = dish_id and public.is_kitchen_member(d.kitchen_id)));
 
 -- ── dish_favorites (личное) ───────────────────────────────
+drop policy if exists favorites_select on dish_favorites;
 create policy favorites_select on dish_favorites for select using (user_id = auth.uid());
+drop policy if exists favorites_insert on dish_favorites;
 create policy favorites_insert on dish_favorites for insert
   with check (user_id = auth.uid()
               and exists (select 1 from dishes d where d.id = dish_id and public.is_kitchen_member(d.kitchen_id)));
+drop policy if exists favorites_delete on dish_favorites;
 create policy favorites_delete on dish_favorites for delete using (user_id = auth.uid());
 
 -- ── planned_dishes (читают все на кухне, пишет каждый своё) ─
+drop policy if exists planned_select on planned_dishes;
 create policy planned_select on planned_dishes for select
   using (public.is_kitchen_member(kitchen_id));
+drop policy if exists planned_insert on planned_dishes;
 create policy planned_insert on planned_dishes for insert
   with check (public.is_kitchen_member(kitchen_id) and user_id = auth.uid());
+drop policy if exists planned_delete on planned_dishes;
 create policy planned_delete on planned_dishes for delete using (user_id = auth.uid());
 
 -- ── product_suggestions ───────────────────────────────────
+drop policy if exists suggestions_select on product_suggestions;
 create policy suggestions_select on product_suggestions for select
   to authenticated using (true);

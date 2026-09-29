@@ -26,9 +26,24 @@ export default {
         body:     ['14px', { lineHeight: '20px', fontWeight: '400' }],
         caption:  ['12px', { lineHeight: '16px', fontWeight: '400' }],
         micro:    ['11px', { lineHeight: '14px', fontWeight: '400' }],
+        // Были в вёрстке, но не в конфиге: текст падал в браузерные 16 px
+        // обычного веса — вторичные подписи выходили крупнее основного
+        // текста, а имя участника не выделялось (обзор 09-26, U-3).
+        small:          ['13px', { lineHeight: '18px', fontWeight: '400' }],
+        'body-semibold':['14px', { lineHeight: '20px', fontWeight: '600' }],
+      },
+      boxShadow: {
+        // На почти чёрном фоне тень работает как отделение плашки от фона,
+        // а не как «подъём»: мягкая и тёмная, без цветных ореолов.
+        card:  '0 1px 3px rgb(0 0 0 / 0.5)',
+        modal: '0 -8px 32px rgb(0 0 0 / 0.6)',
       },
       borderRadius: { sm: '8px', md: '12px', lg: '16px', tile: '6px' },
       spacing: { 13: '52px', 15: '60px' },
+      fontFamily: {
+        // Системные цветные эмодзи (п. 37): на iPhone — Apple, без картинок в сборке
+        emoji: ['"Apple Color Emoji"', '"Segoe UI Emoji"', '"Noto Color Emoji"', 'sans-serif'],
+      },
       // Полоски «идёт запись» у голосового поиска (backlog п. 21)
       keyframes: {
         'voice-bar': {
