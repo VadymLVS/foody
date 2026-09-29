@@ -76,28 +76,57 @@ export function subscribe(listener: Listener): () => void {
 /**
  * Отправляет накопленное. Операции, снова упавшие по сети, остаются
  * в очереди; упавшие по другой причине выбрасываются — повтор их не спасёт.
+ *
+ * Две правки после обзора 09-26 (R-6):
+ *
+ * 1. Отправка идёт по одной и занимает время. Если в это время человек
+ *    отметил тот же продукт ещё раз, прежняя версия сравнивалась по одному
+ *    ключу — и новая отметка исчезала вместе с отправленной. Теперь операция
+ *    убирается из очереди только если совпал и ключ, и момент постановки.
+ * 2. Два вызова разом (событие online и таймер пришли вместе) отправляли
+ *    одно и то же дважды. Теперь второй вызов просто ждёт своей очереди.
+ *
+ * dropped — отброшенные отказы сервера: список у человека уже показывает
+ * их применёнными, поэтому экран обязан сказать, что сохранить не удалось.
  */
-export async function flush(apply: (op: QueuedOp) => Promise<void>): Promise<number> {
-  if (queue.length === 0) return 0;
+let flushing = false;
 
-  const snapshot = [...queue];
-  const failed: QueuedOp[] = [];
-  let sent = 0;
+export interface FlushResult {
+  sent: number;
+  dropped: number;
+}
 
-  for (const op of snapshot) {
-    try {
-      await apply(op);
-      sent += 1;
-    } catch (error) {
-      if (isNetworkError(error)) failed.push(op);
-      // иначе операция отбрасывается: сервер её не примет и со второго раза
+export async function flush(apply: (op: QueuedOp) => Promise<void>): Promise<FlushResult> {
+  if (flushing || queue.length === 0) return { sent: 0, dropped: 0 };
+  flushing = true;
+
+  try {
+    const snapshot = [...queue];
+    const done: QueuedOp[] = [];     // отправленные и отброшенные — уходят из очереди
+    let sent = 0;
+    let dropped = 0;
+
+    for (const op of snapshot) {
+      try {
+        await apply(op);
+        done.push(op);
+        sent += 1;
+      } catch (error) {
+        if (!isNetworkError(error)) {
+          // Сервер её не примет и со второго раза: нарушение прав, дубль имени
+          done.push(op);
+          dropped += 1;
+        }
+      }
     }
-  }
 
-  const stillQueued = new Set(failed.map((op) => op.key));
-  queue = queue.filter((op) => stillQueued.has(op.key) || !snapshot.some((s) => s.key === op.key));
-  persist();
-  return sent;
+    const finished = new Set(done.map((op) => `${op.key}@${op.ts}`));
+    queue = queue.filter((op) => !finished.has(`${op.key}@${op.ts}`));
+    persist();
+    return { sent, dropped };
+  } finally {
+    flushing = false;
+  }
 }
 
 export function clearQueue() {

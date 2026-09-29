@@ -5,6 +5,7 @@ import {
   useCategories, useCreateProduct, useSuggestions, useUpdateProduct,
 } from '@/shared/hooks/useProducts';
 import { norm } from '@/shared/lib/text';
+import { useTapSelect } from '@/shared/lib/tapSelect';
 import { categoryLabel, unitLabel, t } from '@/shared/lib/i18n';
 import type { Product, Unit } from '@/shared/db/types';
 
@@ -30,6 +31,8 @@ export function AddProductModal({
 }: Props) {
   const editing = product !== null;
 
+  // Подсказка должна нажиматься и с открытой клавиатурой (п. 43)
+  const tap = useTapSelect();
   const [name, setName] = useState(initialName);
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [unit, setUnit] = useState<Unit>('pcs');
@@ -151,13 +154,13 @@ export function AddProductModal({
             <button
               key={s.key}
               type="button"
-              onClick={() => {
+              {...tap(() => {
                 setName(s.name);
                 setUnit(s.unit);
                 setLibraryKey(s.key);
                 const match = productCategories.find((c) => c.key === s.categoryKey);
                 setCategoryId(match?.id ?? null);
-              }}
+              })}
               className="h-9 rounded-full border border-line px-3.5 text-micro text-text-muted"
             >
               {s.name}

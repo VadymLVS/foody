@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  CloudOff, ListChecks, PackageCheck, PackagePlus, PartyPopper, Pencil, Receipt, SearchX,
-  Sparkles, Trash2, UtensilsCrossed,
+  CloudOff, ListChecks, MoreHorizontal, PackageCheck, PackagePlus, PartyPopper, Pencil,
+  PowerOff, Receipt, SearchX, Sparkles, Trash2, UtensilsCrossed,
 } from 'lucide-react';
 import {
   ActionSheet, BottomNav, Button, EmptyState, FilterPills, ProductRow, SearchField, Tabs,
@@ -11,12 +11,13 @@ import {
 import { repo } from '@/shared/api';
 import { useCurrentKitchen } from '@/shared/hooks/useKitchens';
 import {
-  useCategories, useDeleteProduct, usePendingCount, useProducts, useProductsRealtime,
-  useQueueFlusher, useSetQuantity, useToggleProduct,
+  useBulkPatch, useCategories, useDeleteProduct, usePendingCount, useProducts,
+  useProductsRealtime, useQueueFlusher, useSetQuantity, useToggleProduct,
 } from '@/shared/hooks/useProducts';
 import { usePlanNeeds, usePlanned } from '@/shared/hooks/useDishes';
 import { useUI } from '@/shared/store/ui';
-import { capitalize, multiSearch, SEARCH_MIN_LENGTH } from '@/shared/lib/text';
+import { capitalize, multiSearch, plural, SEARCH_MIN_LENGTH } from '@/shared/lib/text';
+import { useTapSelect } from '@/shared/lib/tapSelect';
 import { categoryLabel, t } from '@/shared/lib/i18n';
 import { groupByCategory } from './grouping';
 import { AddProductModal } from './AddProductModal';
@@ -59,8 +60,11 @@ export function ProductsScreen() {
   useQueueFlusher(kitchenId);
   const pending = usePendingCount();
 
+  // «Создать «X»» под полем поиска — тот же случай, что подсказки (п. 43)
+  const tap = useTapSelect();
   const toggleProduct = useToggleProduct(kitchenId);
   const setQuantity = useSetQuantity(kitchenId);
+  const bulkPatch = useBulkPatch(kitchenId);
   const { remove, restore } = useDeleteProduct(kitchenId);
 
   const [addOpen, setAddOpen] = useState(false);
@@ -73,6 +77,8 @@ export function ProductsScreen() {
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [menuFor, setMenuFor] = useState<Product | null>(null);
   const [editFor, setEditFor] = useState<Product | null>(null);
+  const [screenMenuOpen, setScreenMenuOpen] = useState(false);
+  const [confirmTurnOff, setConfirmTurnOff] = useState(false);
 
   /**
    * Отмеченное в этом заходе остаётся в списке до смены фильтра.
@@ -134,6 +140,86 @@ export function ProductsScreen() {
     return grouped ? groupByCategory(visible, categories) : null;
   }, [searching, categoryFilter, statusFilter, visible, categories]);
 
+  /**
+   * п. 41 · Выключенный продукт не держит прежнее количество.
+   *
+   * Количество у выключенной позиции быстро становится неактуальным:
+   * в магазине человек смотрит «сколько брать» и видит цифру с прошлого раза
+   * (фидбек Vadym 09-26). Поэтому выключение сбрасывает количество — но это
+   * потеря данных от одного касания, поэтому рядом «Отменить».
+   *
+   * Отмена накапливает подряд выключенные позиции: тост один (по ключу),
+   * и возвращает он всю серию, а не последнюю строку.
+   */
+  const resetBatch = useRef<Array<{ id: string; quantity: number }>>([]);
+  const resetTimer = useRef<number | null>(null);
+
+  const turnOffOne = (product: Product) => {
+    bulkPatch.mutate({ ids: [product.id], patch: { in_stock: false, quantity: 0 } });
+    resetBatch.current = [
+      ...resetBatch.current.filter((e) => e.id !== product.id),
+      { id: product.id, quantity: product.quantity },
+    ];
+    const batch = [...resetBatch.current];
+    if (resetTimer.current) window.clearTimeout(resetTimer.current);
+    resetTimer.current = window.setTimeout(() => { resetBatch.current = []; }, 5000);
+    toast.show(
+      batch.length === 1
+        ? t('products.quantityReset', { name: product.name })
+        : t('products.quantityResetMany', { count: batch.length }),
+      {
+        key: 'quantity-reset',
+        action: { label: t('products.undo'), onClick: () => restoreQuantities(batch) },
+      },
+    );
+  };
+
+  /** Возврат после сброса: одинаковые количества — одним запросом. */
+  const restoreQuantities = (batch: Array<{ id: string; quantity: number }>) => {
+    const byQuantity = new Map<number, string[]>();
+    for (const entry of batch) {
+      byQuantity.set(entry.quantity, [...(byQuantity.get(entry.quantity) ?? []), entry.id]);
+    }
+    for (const [quantity, ids] of byQuantity) {
+      bulkPatch.mutate({ ids, patch: { in_stock: true, quantity } });
+    }
+    resetBatch.current = [];
+  };
+
+  /**
+   * п. 42 · «Актуализировать» список: выключить всё и пройтись заново.
+   *
+   * Область — то, что человек видит: отдел, если выбрана вкладка, найденное
+   * при поиске, иначе вся кухня. Число и область стоят в подтверждении,
+   * иначе «Выключить всё» на вкладке «Овощи» звучит как «во всей кухне».
+   */
+  const turnOffCandidates = useMemo(() => visible.filter((p) => p.in_stock), [visible]);
+  const scopeLabel = searching
+    ? t('products.scope.found')
+    : categoryFilter === 'all'
+      ? t('products.scope.all')
+      : t('products.scope.category', {
+        name: categoryLabel(
+          'product',
+          productCategories.find((c) => c.id === categoryFilter)?.key ?? null,
+          productCategories.find((c) => c.id === categoryFilter)?.name ?? null,
+        ),
+      });
+
+  const turnOffAll = () => {
+    const batch = turnOffCandidates.map((p) => ({ id: p.id, quantity: p.quantity }));
+    if (batch.length === 0) return;
+    bulkPatch.mutate({ ids: batch.map((e) => e.id), patch: { in_stock: false, quantity: 0 } });
+    // Снимок держим до следующего действия, а не пять секунд: человек уходит
+    // проходить список и возвращается не сразу (обзор 09-26, риск по п. 42)
+    resetBatch.current = batch;
+    if (resetTimer.current) window.clearTimeout(resetTimer.current);
+    toast.show(t('products.turnOffAllDone', { count: batch.length }), {
+      key: 'quantity-reset',
+      action: { label: t('products.undo'), onClick: () => restoreQuantities(batch) },
+    });
+  };
+
   const handleDelete = (product: Product) => {
     remove(product.id);
     toast.show(t('products.deleted', { name: product.name }), {
@@ -151,7 +237,11 @@ export function ProductsScreen() {
       // Ползунок только отмечает наличие и панель не раскрывает — иначе в магазине
       // каждая отметка открывала бы панель (решение Vadym, backlog п. 12)
       onToggle={(next) => {
-        toggleProduct(product.id, next);
+        // Включение — обычная отметка наличия; выключение сбрасывает
+        // количество и предлагает «Отменить» (п. 41)
+        if (next) toggleProduct(product.id, true);
+        else if (product.quantity > 0) turnOffOne(product);
+        else toggleProduct(product.id, false);
         remember(product.id);
       }}
       // Тап по строке открывает и закрывает панель у любого продукта
@@ -165,7 +255,7 @@ export function ProductsScreen() {
   const renderCreateButtons = (names: string[]) => (
     <div className="flex flex-wrap justify-center gap-2">
       {names.map((name) => (
-        <Button key={name} size="sm" onClick={() => openAdd(capitalize(name))}>
+        <Button key={name} size="sm" {...tap(() => openAdd(capitalize(name)))}>
           {t('products.create', { name: capitalize(name) })}
         </Button>
       ))}
@@ -268,6 +358,16 @@ export function ProductsScreen() {
         >
           <Receipt className="h-[22px] w-[22px]" />
         </button>
+
+        {/* Действия над всем списком: «Выключить всё» (п. 42) */}
+        <button
+          type="button"
+          onClick={() => setScreenMenuOpen(true)}
+          aria-label={t('products.actions')}
+          className="-mr-1 flex h-11 w-11 items-center justify-center rounded-full text-text-muted active:bg-surface"
+        >
+          <MoreHorizontal className="h-[22px] w-[22px]" />
+        </button>
       </header>
 
       <div className="mb-4">
@@ -315,7 +415,7 @@ export function ProductsScreen() {
             <h2 className="mb-2 text-micro text-text-dim">{t('products.notInList')}</h2>
             <div className="flex flex-wrap gap-2">
               {searchResult.missing.map((name) => (
-                <Button key={name} size="sm" variant="ghost" onClick={() => openAdd(capitalize(name))}>
+                <Button key={name} size="sm" variant="ghost" {...tap(() => openAdd(capitalize(name)))}>
                   {t('products.create', { name: capitalize(name) })}
                 </Button>
               ))}
@@ -362,6 +462,38 @@ export function ProductsScreen() {
         product={editFor}
         existingNames={products.map((p) => p.name)}
         onClose={() => setEditFor(null)}
+      />
+
+      <ActionSheet
+        open={screenMenuOpen}
+        title={t('products.actions')}
+        note={t('products.turnOffAllHint')}
+        onClose={() => setScreenMenuOpen(false)}
+        actions={[{
+          label: t('products.turnOffAll'),
+          Icon: PowerOff,
+          onClick: () => {
+            if (turnOffCandidates.length === 0) toast.show(t('products.turnOffAllEmpty'));
+            else setConfirmTurnOff(true);
+          },
+        }]}
+      />
+
+      <ActionSheet
+        open={confirmTurnOff}
+        title={t('products.turnOffAllConfirm', {
+          count: turnOffCandidates.length,
+          noun: plural(turnOffCandidates.length, 'продукт', 'продукта', 'продуктов'),
+          scope: scopeLabel,
+        })}
+        note={t('products.turnOffAllNote')}
+        onClose={() => setConfirmTurnOff(false)}
+        actions={[{
+          label: t('products.turnOffAll'),
+          Icon: PowerOff,
+          danger: true,
+          onClick: turnOffAll,
+        }]}
       />
 
       <ActionSheet

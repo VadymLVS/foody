@@ -94,6 +94,12 @@ export interface Repo {
   updateProduct(id: string, patch: ProductPatch): Promise<void>;
   /** Отметить наличие сразу у нескольких продуктов одним запросом. */
   setInStock(ids: string[], inStock: boolean): Promise<void>;
+  /**
+   * Одна правка сразу многим продуктам — «Выключить всё» и возврат после него
+   * (backlog п. 42). Отдельный метод нужен, чтобы 118 продуктов уходили
+   * одним запросом, а не сотней.
+   */
+  bulkPatch(ids: string[], patch: ProductPatch): Promise<void>;
   /** Сколько ингредиентов в блюдах ссылаются на продукт с указанным количеством. */
   countQuantifiedUsage(productId: string): Promise<number>;
   softDeleteProduct(id: string): Promise<void>;
@@ -105,6 +111,8 @@ export interface Repo {
   /** Правка блюда: название, категория, рецепт; состав заменяется целиком (п. 32). */
   updateDish(id: string, input: NewDish): Promise<void>;
   deleteDish(id: string): Promise<void>;
+  /** Вернуть удалённое блюдо — «Отменить» в тосте, как у продуктов (D-009, U-1). */
+  restoreDish(id: string): Promise<void>;
   toggleFavorite(dishId: string, next: boolean): Promise<void>;
 
   loadDeck(kitchenId: string): Promise<DeckCard[]>;

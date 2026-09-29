@@ -5,6 +5,7 @@ import type { NewProduct, ProductPatch } from '@/shared/api';
 import type { Product } from '@/shared/db/types';
 import { useUI } from '@/shared/store/ui';
 import { enqueue, flush, isNetworkError, subscribe } from '@/shared/lib/opQueue';
+import { useToast } from '@/shared/ui/Toast';
 
 export function useCategories(kitchenId: string) {
   return useQuery({
@@ -73,14 +74,23 @@ export function usePendingCount(): number {
  */
 export function useQueueFlusher(kitchenId: string) {
   const queryClient = useQueryClient();
+  const toast = useToast();
 
   useEffect(() => {
     if (!kitchenId) return;
 
     const run = async () => {
-      const sent = await flush((op) => repo.updateProduct(op.productId, op.patch));
-      if (sent > 0) {
+      const { sent, dropped } = await flush((op) => repo.updateProduct(op.productId, op.patch));
+      if (sent > 0 || dropped > 0) {
         void queryClient.invalidateQueries({ queryKey: qk.products(kitchenId) });
+      }
+      // Отказ сервера отбрасывается молча — а в списке отметка уже стоит.
+      // Без этого человек уверен, что сохранилось (обзор 09-26, R-6).
+      if (dropped > 0) {
+        toast.show(
+          dropped === 1 ? 'Одно изменение не сохранилось' : `Не сохранилось изменений: ${dropped}`,
+          { tone: 'danger' },
+        );
       }
     };
 
@@ -94,7 +104,7 @@ export function useQueueFlusher(kitchenId: string) {
       clearInterval(timer);
       window.removeEventListener('online', onOnline);
     };
-  }, [kitchenId, queryClient]);
+  }, [kitchenId, queryClient, toast]);
 }
 
 /** Общий оптимистичный апдейт: правим кэш сразу, откатываем при ошибке. */
@@ -149,6 +159,33 @@ export function useToggleProduct(kitchenId: string) {
 export function useSetQuantity(kitchenId: string) {
   const patch = useOptimisticPatch(kitchenId);
   return (id: string, quantity: number) => patch.mutate({ id, patch: { quantity } });
+}
+
+/**
+ * Одна правка сразу многим продуктам: «Выключить всё» и возврат после него
+ * (backlog п. 42). Кэш обновляем на месте — 118 строк не должны мигать.
+ */
+export function useBulkPatch(kitchenId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ ids, patch }: { ids: string[]; patch: ProductPatch }) =>
+      repo.bulkPatch(ids, patch),
+    onMutate: async ({ ids, patch }) => {
+      await queryClient.cancelQueries({ queryKey: qk.products(kitchenId) });
+      const previous = queryClient.getQueryData<Product[]>(qk.products(kitchenId));
+      const set = new Set(ids);
+      queryClient.setQueryData<Product[]>(qk.products(kitchenId), (old) =>
+        (old ?? []).map((p) => (set.has(p.id) ? { ...p, ...patch } : p)));
+      return { previous };
+    },
+    onError: (_e, _v, context) => {
+      if (context?.previous) queryClient.setQueryData(qk.products(kitchenId), context.previous);
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: qk.products(kitchenId) });
+      void queryClient.invalidateQueries({ queryKey: qk.planNeeds(kitchenId) });
+    },
+  });
 }
 
 /** Правка продукта из формы: название, категория, единица, картинка (backlog п. 11). */

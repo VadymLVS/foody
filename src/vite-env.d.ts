@@ -1,4 +1,8 @@
 /// <reference types="vite/client" />
+/// <reference types="vite-plugin-pwa/client" />
+
+/** Версия сборки для Настроек: видно, какая именно версия на телефоне (R-10). */
+declare const __BUILD_VERSION__: string;
 
 interface ImportMetaEnv {
   readonly VITE_SUPABASE_URL: string;

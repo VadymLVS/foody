@@ -1,4 +1,5 @@
-import { Pencil, Trash2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { EyeOff, Pencil, Trash2 } from 'lucide-react';
 import { Button, Modal } from '@/shared/ui';
 import { formatNumber } from '@/shared/lib/text';
 import { t, unitLabel } from '@/shared/lib/i18n';
@@ -16,9 +17,14 @@ interface Props {
 
 /**
  * Состав набора и что с ним сделать (D-053).
- * Главное действие одно: «Готовим этот набор» или, если он уже в плане, «Снять набор».
+ * Главное действие одно: «Добавить в меню» или, если набор уже в меню, «Убрать из меню» (D-063).
  */
 export function SetSheet({ view, busy, onClose, onApply, onRemove, onEdit, onDelete }: Props) {
+  // Удаление набора необратимо, а у готового означает «больше не предлагать»:
+  // спрашиваем прямо здесь, вторым шагом, без вложенного окна (U-1)
+  const [confirming, setConfirming] = useState(false);
+  useEffect(() => { setConfirming(false); }, [view?.key]);
+
   if (!view) return null;
 
   return (
@@ -68,24 +74,42 @@ export function SetSheet({ view, busy, onClose, onApply, onRemove, onEdit, onDel
         </section>
       )}
 
-      <div className="flex gap-2">
-        <button
-          type="button"
-          onClick={onEdit}
-          className="flex h-11 flex-1 items-center justify-center gap-2 rounded-sm text-body text-text-muted active:bg-surface-2"
-        >
-          <Pencil className="h-4 w-4" />
-          {t('sets.edit')}
-        </button>
-        <button
-          type="button"
-          onClick={onDelete}
-          className="flex h-11 flex-1 items-center justify-center gap-2 rounded-sm text-body text-danger active:bg-surface-2"
-        >
-          <Trash2 className="h-4 w-4" />
-          {t('sets.delete')}
-        </button>
-      </div>
+      {confirming ? (
+        <div className="rounded-sm bg-surface-2 p-3">
+          <p className="mb-3 text-caption text-text-primary">
+            {view.isLibrary
+              ? t('sets.hideConfirm', { name: view.name })
+              : t('sets.deleteConfirm', { name: view.name })}
+          </p>
+          <div className="flex gap-2">
+            <Button variant="secondary" fullWidth onClick={() => setConfirming(false)}>
+              {t('common.cancel')}
+            </Button>
+            <Button variant="danger" fullWidth loading={busy} onClick={onDelete}>
+              {view.isLibrary ? t('sets.hideYes') : t('sets.deleteYes')}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={onEdit}
+            className="flex h-11 flex-1 items-center justify-center gap-2 rounded-sm text-body text-text-muted active:bg-surface-2"
+          >
+            <Pencil className="h-4 w-4" />
+            {t('sets.edit')}
+          </button>
+          <button
+            type="button"
+            onClick={() => setConfirming(true)}
+            className="flex h-11 flex-1 items-center justify-center gap-2 rounded-sm text-body text-danger active:bg-surface-2"
+          >
+            {view.isLibrary ? <EyeOff className="h-4 w-4" /> : <Trash2 className="h-4 w-4" />}
+            {view.isLibrary ? t('sets.hide') : t('sets.delete')}
+          </button>
+        </div>
+      )}
     </Modal>
   );
 }

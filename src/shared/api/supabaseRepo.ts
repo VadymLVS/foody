@@ -11,6 +11,20 @@ if (hasSupabaseCredentials) {
   supabase.auth.onAuthStateChange((_e, session) => { cachedUserId = session?.user?.id ?? ''; });
 }
 
+/**
+ * Свой id для записи. Раньше писали cachedUserId напрямую, а он заполняется
+ * асинхронно: первое действие сразу после запуска уходило с пустым created_by
+ * и падало на RLS (обзор 09-26, R-5). Здесь id при необходимости дочитывается
+ * у сессии, и без него запись вообще не отправляется.
+ */
+async function uid(): Promise<string> {
+  if (cachedUserId) return cachedUserId;
+  const { data } = await supabase.auth.getUser();
+  cachedUserId = data.user?.id ?? '';
+  if (!cachedUserId) throw new Error('unauthorized');
+  return cachedUserId;
+}
+
 function unwrap<T>(r: { data: T | null; error: { message: string } | null }): T {
   if (r.error) throw new Error(r.error.message);
   if (r.data === null) throw new Error('empty_response');
@@ -67,8 +81,8 @@ export const supabaseRepo: Repo = {
         unit: input.unit,
         in_stock: input.inStock,
         library_key: input.libraryKey ?? null,
-        created_by: cachedUserId,
-        updated_by: cachedUserId,
+        created_by: await uid(),
+        updated_by: await uid(),
       }).select().single(),
     ) as Product;
   },
@@ -99,6 +113,7 @@ export const supabaseRepo: Repo = {
     });
     if (fresh.length === 0) return [];
 
+    const me = await uid();
     const row = (input: NewProduct) => ({
       kitchen_id: kitchenId,
       name: input.name.trim(),
@@ -106,8 +121,8 @@ export const supabaseRepo: Repo = {
       unit: input.unit,
       in_stock: input.inStock,
       library_key: input.libraryKey ?? null,
-      created_by: cachedUserId,
-      updated_by: cachedUserId,
+      created_by: me,
+      updated_by: me,
     });
 
     const { data, error } = await supabase.from('products').insert(fresh.map(row)).select();
@@ -132,7 +147,14 @@ export const supabaseRepo: Repo = {
   async setInStock(ids: string[], inStock: boolean) {
     if (ids.length === 0) return;
     const { error } = await supabase.from('products')
-      .update({ in_stock: inStock, updated_by: cachedUserId }).in('id', ids);
+      .update({ in_stock: inStock, updated_by: await uid() }).in('id', ids);
+    if (error) throw new Error(error.message);
+  },
+
+  async bulkPatch(ids, patch) {
+    if (ids.length === 0) return;
+    const { error } = await supabase.from('products')
+      .update({ ...patch, updated_by: await uid() }).in('id', ids);
     if (error) throw new Error(error.message);
   },
 
@@ -147,19 +169,19 @@ export const supabaseRepo: Repo = {
 
   async updateProduct(id, patch: ProductPatch) {
     const { error } = await supabase
-      .from('products').update({ ...patch, updated_by: cachedUserId }).eq('id', id);
+      .from('products').update({ ...patch, updated_by: await uid() }).eq('id', id);
     if (error) throw new Error(error.message);
   },
 
   async softDeleteProduct(id) {
     const { error } = await supabase.from('products')
-      .update({ deleted_at: new Date().toISOString(), updated_by: cachedUserId }).eq('id', id);
+      .update({ deleted_at: new Date().toISOString(), updated_by: await uid() }).eq('id', id);
     if (error) throw new Error(error.message);
   },
 
   async restoreProduct(id) {
     const { error } = await supabase.from('products')
-      .update({ deleted_at: null, updated_by: cachedUserId }).eq('id', id);
+      .update({ deleted_at: null, updated_by: await uid() }).eq('id', id);
     if (error) throw new Error(error.message);
   },
 
@@ -211,7 +233,7 @@ export const supabaseRepo: Repo = {
 
     const planned = new Set(
       (unwrap(await supabase.from('planned_dishes').select('dish_id')
-        .eq('kitchen_id', kitchenId).eq('user_id', cachedUserId),
+        .eq('kitchen_id', kitchenId).eq('user_id', await uid()),
       ) as Array<{ dish_id: string }>).map((p) => p.dish_id),
     );
 
@@ -236,7 +258,7 @@ export const supabaseRepo: Repo = {
         name: input.name.trim(),
         category_id: input.categoryId,
         library_key: input.libraryKey ?? null,
-        created_by: cachedUserId,
+        created_by: await uid(),
         // Поле добавляется, только если заполнено: до миграции 0007 колонки нет
         ...(input.recipe ? { recipe: input.recipe } : {}),
       }).select('id').single(),
@@ -285,16 +307,16 @@ export const supabaseRepo: Repo = {
   },
 
   async getDiet() {
-    // id берём у самой сессии: cachedUserId при первом запросе ещё может быть пустым
-    const { data: auth } = await supabase.auth.getUser();
-    const userId = auth.user?.id;
-    if (!userId) return { diet: 'omnivore', excludes: [] };
+    // Без аккаунта экран питания не показываем: спрашивать некого
+    let userId: string;
+    try { userId = await uid(); } catch { return { diet: 'omnivore', excludes: [] }; }
     const { data, error } = await supabase.from('user_settings')
       .select('diet, diet_excludes').eq('user_id', userId).maybeSingle();
     if (error) {
-      // До миграции 0007 колонок нет — считаем, что ответ уже дан, иначе экран
-      // «Что вы едите?» показывался бы при каждом запуске
-      if (/diet/i.test(error.message)) return { diet: 'omnivore', excludes: [] };
+      // 42703 — «колонки нет»: миграция 0008 ещё не выполнена. Считаем, что ответ
+      // уже дан, иначе экран «Что вы едите?» показывался бы при каждом запуске.
+      // Сравнивать текст ошибки нельзя: он меняется и локализуется (R-4).
+      if (error.code === '42703') return { diet: 'omnivore', excludes: [] };
       throw new Error(error.message);
     }
     const row = data as { diet: DietProfile['diet']; diet_excludes: DietProfile['excludes'] } | null;
@@ -302,9 +324,7 @@ export const supabaseRepo: Repo = {
   },
 
   async saveDiet(profile) {
-    const { data: auth } = await supabase.auth.getUser();
-    const userId = auth.user?.id;
-    if (!userId) throw new Error('unauthorized');
+    const userId = await uid();
     const { error } = await supabase.from('user_settings')
       .update({ diet: profile.diet, diet_excludes: profile.excludes }).eq('user_id', userId);
     if (error) throw new Error(error.message);
@@ -316,11 +336,17 @@ export const supabaseRepo: Repo = {
     if (error) throw new Error(error.message);
   },
 
+  async restoreDish(id) {
+    const { error } = await supabase.from('dishes')
+      .update({ deleted_at: null }).eq('id', id);
+    if (error) throw new Error(error.message);
+  },
+
   async toggleFavorite(dishId, next) {
     const { error } = next
-      ? await supabase.from('dish_favorites').insert({ dish_id: dishId, user_id: cachedUserId })
+      ? await supabase.from('dish_favorites').insert({ dish_id: dishId, user_id: await uid() })
       : await supabase.from('dish_favorites').delete()
-          .eq('dish_id', dishId).eq('user_id', cachedUserId);
+          .eq('dish_id', dishId).eq('user_id', await uid());
     if (error) throw new Error(error.message);
   },
 
@@ -334,7 +360,7 @@ export const supabaseRepo: Repo = {
   async listPlanned(kitchenId) {
     const rows = unwrap(
       await supabase.from('planned_dishes').select('dish_id')
-        .eq('kitchen_id', kitchenId).eq('user_id', cachedUserId),
+        .eq('kitchen_id', kitchenId).eq('user_id', await uid()),
     ) as Array<{ dish_id: string }>;
     return rows.map((r) => r.dish_id);
   },
@@ -343,14 +369,14 @@ export const supabaseRepo: Repo = {
     // ignoreDuplicates: блюдо уже в плане (например, из набора) — оставляем как есть.
     // Обычный upsert перезаписал бы строку и требовал бы политики на update.
     const { error } = await supabase.from('planned_dishes')
-      .upsert({ kitchen_id: kitchenId, user_id: cachedUserId, dish_id: dishId },
+      .upsert({ kitchen_id: kitchenId, user_id: await uid(), dish_id: dishId },
               { onConflict: 'kitchen_id,user_id,dish_id', ignoreDuplicates: true });
     if (error) throw new Error(error.message);
   },
 
   async removeFromPlan(kitchenId, dishId) {
     const { error } = await supabase.from('planned_dishes').delete()
-      .eq('kitchen_id', kitchenId).eq('user_id', cachedUserId).eq('dish_id', dishId);
+      .eq('kitchen_id', kitchenId).eq('user_id', await uid()).eq('dish_id', dishId);
     if (error) throw new Error(error.message);
   },
 
@@ -372,7 +398,7 @@ export const supabaseRepo: Repo = {
 
     const planned = unwrap(
       await supabase.from('planned_sets').select('id, set_id, created_at')
-        .eq('kitchen_id', kitchenId).eq('user_id', cachedUserId),
+        .eq('kitchen_id', kitchenId).eq('user_id', await uid()),
     ) as Array<{ id: string; set_id: string; created_at: string }>;
     const plannedBySet = new Map(planned.map((p) => [p.set_id, p]));
 
@@ -411,7 +437,7 @@ export const supabaseRepo: Repo = {
       const created = unwrap(
         await supabase.from('dish_sets').insert({
           kitchen_id: kitchenId, name: input.name.trim(),
-          library_key: input.libraryKey ?? null, created_by: cachedUserId,
+          library_key: input.libraryKey ?? null, created_by: await uid(),
         }).select('id').single(),
       ) as { id: string };
       setId = created.id;
@@ -440,7 +466,7 @@ export const supabaseRepo: Repo = {
     // Строка-заглушка с deleted_at: набор больше не предлагается из справочника
     const { error } = await supabase.from('dish_sets').insert({
       kitchen_id: kitchenId, name: libraryKey, library_key: libraryKey,
-      deleted_at: new Date().toISOString(), created_by: cachedUserId,
+      deleted_at: new Date().toISOString(), created_by: await uid(),
     });
     if (error) throw new Error(error.message);
   },

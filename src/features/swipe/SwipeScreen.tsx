@@ -100,7 +100,7 @@ export function SwipeScreen() {
 
       <SwipeDeck
         items={items}
-        acceptLabel="Готовим это"
+        acceptLabel="В меню"
         rejectLabel="Пропустить"
         onProgress={setPosition}
         onEnd={() => setDeckOver(true)}

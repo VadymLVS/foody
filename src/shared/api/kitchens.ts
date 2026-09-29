@@ -7,9 +7,17 @@ export interface KitchenSummary {
   name: string;
   role: Role;
   memberCount: number;
-  inviteCode: string | null;
   inviteExpiresAt: string | null;
   invitesEnabled: boolean;
+}
+
+/**
+ * Код приглашения больше не приходит вместе с кухней: столбец закрыт
+ * правами, его отдаёт RPC и только владельцу (обзор 09-26, B-3).
+ */
+export interface Invite {
+  code: string;
+  expiresAt: string | null;
 }
 
 export interface InvitePreview {
@@ -25,6 +33,7 @@ export interface KitchensApi {
   listMembers(id: string): Promise<Member[]>;
   removeMember(id: string, userId: string): Promise<void>;
   leave(id: string): Promise<void>;
+  invite(id: string): Promise<Invite | null>;
   peekInvite(code: string): Promise<InvitePreview | null>;
   join(code: string): Promise<string>;
   regenerateInvite(id: string): Promise<string>;
@@ -55,14 +64,14 @@ const supabaseKitchens: KitchensApi = {
     if (!userId) return [];
     const { data, error } = await supabase
       .from('kitchen_members')
-      .select('role, kitchens(id, name, invite_code, invite_expires_at, invites_enabled)')
+      .select('role, kitchens(id, name, invite_expires_at, invites_enabled)')
       .eq('user_id', userId);
     if (error) throw new Error(error.message);
 
     const rows = (data ?? []) as unknown as Array<{
       role: Role;
       kitchens: {
-        id: string; name: string; invite_code: string;
+        id: string; name: string;
         invite_expires_at: string | null; invites_enabled: boolean;
       } | null;
     }>;
@@ -74,9 +83,6 @@ const supabaseKitchens: KitchensApi = {
         name: row.kitchens!.name,
         role: row.role,
         memberCount: 0,
-        // Код приглашения показываем только владельцу: участнику он не нужен,
-        // а лишняя копия ссылки — лишний путь утечки (T-5).
-        inviteCode: row.role === 'owner' ? row.kitchens!.invite_code : null,
         inviteExpiresAt: row.kitchens!.invite_expires_at,
         invitesEnabled: row.kitchens!.invites_enabled,
       }));
@@ -113,15 +119,24 @@ const supabaseKitchens: KitchensApi = {
   },
 
   async listMembers(id) {
-    const { data, error } = await supabase
-      .from('kitchen_members')
-      .select('kitchen_id, user_id, role, joined_at, profiles(id, email, full_name, avatar_url)')
-      .eq('kitchen_id', id)
-      .order('joined_at');
+    // RPC вместо запроса к profiles: чужую почту база больше не отдаёт (B-6)
+    const { data, error } = await supabase.rpc('kitchen_people', { p_kitchen: id });
     if (error) throw new Error(error.message);
-    return (data ?? []).map((row: Record<string, unknown>) => ({
-      ...(row as unknown as Member),
-      profile: row.profiles as Member['profile'],
+    const rows = (data ?? []) as Array<{
+      user_id: string; role: Role; joined_at: string;
+      full_name: string | null; avatar_url: string | null; email: string | null;
+    }>;
+    return rows.map<Member>((row) => ({
+      kitchen_id: id,
+      user_id: row.user_id,
+      role: row.role,
+      joined_at: row.joined_at,
+      profile: {
+        id: row.user_id,
+        email: row.email ?? '',
+        full_name: row.full_name,
+        avatar_url: row.avatar_url,
+      },
     }));
   },
 
@@ -144,6 +159,13 @@ const supabaseKitchens: KitchensApi = {
       .eq('kitchen_id', id)
       .eq('user_id', userId);
     if (error) throw new Error(error.message);
+  },
+
+  async invite(id) {
+    const { data, error } = await supabase.rpc('kitchen_invite', { p_kitchen: id });
+    if (error) throw new Error(error.message);
+    const row = (data as Array<{ invite_code: string; invite_expires_at: string | null }>)?.[0];
+    return row ? { code: row.invite_code, expiresAt: row.invite_expires_at } : null;
   },
 
   async peekInvite(code) {
@@ -187,7 +209,6 @@ const demoKitchens: KitchensApi = {
         name: 'Дом',
         role: 'owner',
         memberCount: 2,
-        inviteCode: 'demo-invite-code',
         inviteExpiresAt: new Date(Date.now() + 7 * 864e5).toISOString(),
         invitesEnabled: true,
       },
@@ -215,6 +236,9 @@ const demoKitchens: KitchensApi = {
   },
   async removeMember() {},
   async leave() {},
+  async invite() {
+    return { code: 'demo-invite-code', expiresAt: new Date(Date.now() + 7 * 864e5).toISOString() };
+  },
   async peekInvite() { return { kitchenName: 'Дом', ownerName: 'Вы' }; },
   async join() {
     try { localStorage.removeItem(DEMO_FRESH); } catch { /* приватный режим */ }

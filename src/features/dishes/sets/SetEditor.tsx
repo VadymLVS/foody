@@ -138,7 +138,7 @@ export function SetEditor({ kitchenId, open, set = null, initialDishIds, onClose
         <div>
           <span className="mb-1 block text-micro text-text-muted">{t('sets.editor.dishes')}</span>
           {dishIds.length === 0 && <p className="mb-2 text-caption text-text-dim">{t('sets.editor.dishesEmpty')}</p>}
-          <div className="max-h-[24vh] overflow-y-auto">
+          <div>
             {dishIds.map((id) => (
               <div key={id} className="flex h-11 items-center gap-2 border-b border-line">
                 <span className="min-w-0 flex-1 truncate text-body">{dishById.get(id)?.name ?? '—'}</span>
@@ -190,7 +190,7 @@ export function SetEditor({ kitchenId, open, set = null, initialDishIds, onClose
         <div>
           <span className="mb-1 block text-micro text-text-muted">{t('sets.editor.products')}</span>
           {picked.length === 0 && <p className="mb-2 text-caption text-text-dim">{t('sets.editor.productsEmpty')}</p>}
-          <div className="max-h-[24vh] overflow-y-auto">
+          <div>
             {picked.map((product) => (
               <div key={product.id} className="flex h-12 items-center gap-1 border-b border-line">
                 <span className="min-w-0 flex-1 truncate text-body">{product.name}</span>

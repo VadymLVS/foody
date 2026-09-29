@@ -10,13 +10,14 @@ import {
 import { useCurrentKitchen } from '@/shared/hooks/useKitchens';
 import { useDishes, usePlanActions } from '@/shared/hooks/useDishes';
 import { useCategories, useToggleProduct } from '@/shared/hooks/useProducts';
-import { searchByName } from '@/shared/lib/text';
+import { plural, searchByName } from '@/shared/lib/text';
 import { categoryLabel, t } from '@/shared/lib/i18n';
 import { cn } from '@/shared/lib/cn';
 import {
   useApplySet, useClearPlan, useDeleteSet, useMaterializeSet, useRemovePlannedSet, useSets,
 } from '@/shared/hooks/useSets';
 import { DishDetail } from './DishDetail';
+import { SectionIcon } from './SectionIcon';
 import { CreateDishModal } from './CreateDishModal';
 import { SetsList, toSetView, type SetView } from './sets/SetsList';
 import { SetSheet } from './sets/SetSheet';
@@ -50,7 +51,7 @@ export function DishesScreen() {
 
   const { data: dishes = [], isLoading } = useDishes(kitchenId);
   const { data: categories = [] } = useCategories(kitchenId);
-  const { add, remove, favorite, removeDish } = usePlanActions(kitchenId);
+  const { add, remove, favorite, removeDish, restoreDish } = usePlanActions(kitchenId);
   const toggleProduct = useToggleProduct(kitchenId);
 
   // ?tab=planned — сюда ведут «Готово» из карусели и из режима выбора (п. 19–20)
@@ -58,7 +59,7 @@ export function DishesScreen() {
   /*
    * Три уровня, как в «Продуктах» (п. 24): раздел «Блюда | Наборы» →
    * тип блюда (вкладки) → состояние (пилюли). Раньше всё было одним рядом,
-   * и «Готовим», «Готово», «Супы» стояли на равных.
+   * и «В меню», «Можно готовить», «Супы» стояли на равных.
    */
   const [mode, setMode] = useState<Mode>(params.get('tab') === 'sets' ? 'sets' : 'dishes');
   const [category, setCategory] = useState('all');
@@ -160,7 +161,10 @@ export function DishesScreen() {
   const onDeleteSet = (view: SetView) => {
     deleteSet.mutate(view.ref, {
       onSuccess: () => {
-        toast.show(t('sets.deleted', { name: view.name }));
+        // У готового набора это не удаление, а «больше не предлагать» (U-1)
+        toast.show(view.isLibrary
+          ? t('sets.hidden', { name: view.name })
+          : t('sets.deleted', { name: view.name }));
         setSheet(null);
       },
       onError: failed,
@@ -170,6 +174,25 @@ export function DishesScreen() {
   const dishCategories = useMemo(() => categories.filter((c) => c.kind === 'dish'), [categories]);
   const readyCount = dishes.filter((d) => d.missingCount === 0).length;
   const plannedCount = dishes.filter((d) => d.isPlanned).length;
+
+  /**
+   * Что именно уйдёт из меню — числом в подтверждении. «Очистить меню»
+   * восстанавливать дороже всего, и человек должен видеть охват (U-1).
+   */
+  const clearScope = useMemo(() => {
+    const parts: string[] = [];
+    if (plannedCount > 0) {
+      parts.push(t('sets.clearCount.dishes', {
+        count: plannedCount, noun: plural(plannedCount, 'блюдо', 'блюда', 'блюд'),
+      }));
+    }
+    if (activeSets.length > 0) {
+      parts.push(t('sets.clearCount.sets', {
+        count: activeSets.length, noun: plural(activeSets.length, 'набор', 'набора', 'наборов'),
+      }));
+    }
+    return parts.length > 0 ? t('sets.clearConfirm', { count: parts.join(' и ') }) : '';
+  }, [plannedCount, activeSets.length]);
 
   const iconFor = (dish: DishWithStatus) => {
     const category = dishCategories.find((c) => c.id === dish.category_id);
@@ -185,16 +208,65 @@ export function DishesScreen() {
     return searchByName(list, search);
   }, [dishes, category, status, search]);
 
-  // Выбирают из всех блюд: на вкладке «Готовим» снятая плитка исчезала бы из-под пальца
+  /*
+   * Меню на момент входа в режим выбора — для «Отмены» (п. 40): передумал —
+   * одно нажатие возвращает как было, а не снятие галочек по одной.
+   */
+  const [menuBefore, setMenuBefore] = useState<Set<string> | null>(null);
+  const cancelSelecting = () => {
+    if (menuBefore) {
+      for (const dish of dishes) {
+        if (dish.isPlanned && !menuBefore.has(dish.id)) remove.mutate(dish.id);
+        else if (!dish.isPlanned && menuBefore.has(dish.id)) add.mutate(dish.id);
+      }
+    }
+    setMenuBefore(null);
+    setSelecting(false);
+  };
+
+  // Выбирают из всех блюд: в фильтре «В меню» снятая плитка исчезала бы из-под пальца
   const startSelecting = () => {
+    setMenuBefore(new Set(dishes.filter((d) => d.isPlanned).map((d) => d.id)));
     setSelecting(true);
     setMode('dishes');
     if (status === 'planned') setStatus('all');
   };
   const finishSelecting = () => {
+    setMenuBefore(null);
     setSelecting(false);
     showPlanned();
   };
+
+  // Раскладка по двум столбцам: оценка высоты по пропорции снимка, без снимка — 104px на ~200px ширины
+  const masonry = useMemo(() => {
+    const cols: [DishWithStatus[], DishWithStatus[]] = [[], []];
+    let left = 0;
+    let right = 0;
+    for (const dish of visible) {
+      const h = (dish.image_w && dish.image_h ? dish.image_h / dish.image_w : 104 / 200) + 0.03;
+      if (left <= right) { cols[0].push(dish); left += h; } else { cols[1].push(dish); right += h; }
+    }
+    return cols;
+  }, [visible]);
+
+  const renderTile = (dish: DishWithStatus) => (
+    <DishTile
+      key={dish.id}
+      selectable={selecting}
+      // Медаль — только в режиме выбора; в обычном просмотре меню живёт в своём фильтре
+      selected={selecting && dish.isPlanned}
+      onClick={() => (selecting ? togglePlan(dish) : setDetail(dish))}
+      dish={{
+        id: dish.id,
+        name: dish.name,
+        imageUrl: dish.library_key ? `/library/dishes/${dish.library_key}.webp` : null,
+        aspect: dish.image_w && dish.image_h ? dish.image_w / dish.image_h : null,
+        missingCount: dish.missingCount,
+        isFavorite: dish.isFavorite,
+        categoryIcon: iconFor(dish),
+      }}
+    />
+  );
 
   const togglePlan = (dish: DishWithStatus) => {
     if (dish.isPlanned) remove.mutate(dish.id);
@@ -241,25 +313,33 @@ export function DishesScreen() {
         )}
       </header>
 
-      {/* Раздел: блюда или наборы. Наборы — отдельный список, фильтры блюд к ним не относятся */}
+      {/*
+        Раздел: блюда или наборы. Наборы — отдельный список, фильтры блюд к ним не относятся.
+        Переключатель не замечали (п. 37): цветные значки-эмодзи, у активного пункта
+        подложка светлее и значок в полном цвете, у неактивного — приглушён. Без яркой плашки.
+      */}
       <div className="mb-4 flex rounded-full bg-surface p-1" role="group" aria-label={t('dishes.section')}>
-        {(['dishes', 'sets'] as const).map((m) => (
-          <button
-            key={m}
-            type="button"
-            aria-pressed={mode === m}
-            onClick={() => {
-              setMode(m);
-              if (m === 'sets') setSelecting(false);
-            }}
-            className={cn(
-              'h-10 flex-1 rounded-full text-body transition-colors',
-              mode === m ? 'bg-surface-2 text-text-primary' : 'text-text-muted',
-            )}
-          >
-            {m === 'dishes' ? t('dishes.title') : t('sets.tab')}
-          </button>
-        ))}
+        {(['dishes', 'sets'] as const).map((m) => {
+          const active = mode === m;
+          return (
+            <button
+              key={m}
+              type="button"
+              aria-pressed={active}
+              onClick={() => {
+                setMode(m);
+                if (m === 'sets') cancelSelecting();
+              }}
+              className={cn(
+                'flex h-11 flex-1 items-center justify-center gap-2 rounded-full text-body transition-colors duration-200',
+                active ? 'bg-[#2E2D2D] text-text-primary' : 'text-text-muted',
+              )}
+            >
+              <SectionIcon kind={m} active={active} ring={active ? '#2E2D2D' : '#1A1919'} />
+              {m === 'dishes' ? t('dishes.title') : t('sets.tab')}
+            </button>
+          );
+        })}
       </div>
 
       <div className="mb-4">
@@ -398,30 +478,32 @@ export function DishesScreen() {
           )
         )}
 
-        <div className="columns-2 gap-1.5">
-          {!isSets && visible.map((dish) => (
-            <DishTile
-              key={dish.id}
-              selectable={selecting}
-              // Медаль — только в режиме выбора; в обычном просмотре план живёт на своей вкладке
-              selected={selecting && dish.isPlanned}
-              onClick={() => (selecting ? togglePlan(dish) : setDetail(dish))}
-              dish={{
-                id: dish.id,
-                name: dish.name,
-                imageUrl: dish.library_key ? `/library/dishes/${dish.library_key}.webp` : null,
-                aspect: dish.image_w && dish.image_h ? dish.image_w / dish.image_h : null,
-                missingCount: dish.missingCount,
-                isFavorite: dish.isFavorite,
-                categoryIcon: iconFor(dish),
-              }}
-            />
-          ))}
-        </div>
+        {/*
+          Кладка — два обычных столбца, а не CSS-колонки (п. 39): Safari с ошибками
+          перерисовывал анимацию медали во второй колонке многоколоночного блока.
+          Блюдо уходит в столбец, который сейчас короче, — как и раньше, по высоте.
+        */}
+        {!isSets && (
+          <div className="flex items-start gap-1.5">
+            {masonry.map((column, i) => (
+              <div key={i} className="flex min-w-0 flex-1 flex-col">
+                {column.map(renderTile)}
+              </div>
+            ))}
+          </div>
+        )}
       </main>
 
+      {/* Нижняя навигация учитывает безопасную зону, а эта панель — нет:
+          на iPhone кнопки уезжали под островок (обзор 09-26, U-5) */}
       {selecting && (
-        <div className="fixed inset-x-0 bottom-24 z-30 flex justify-center">
+        <div
+          className="fixed inset-x-0 z-30 flex justify-center gap-2"
+          style={{ bottom: 'calc(6rem + env(safe-area-inset-bottom))' }}
+        >
+          <Button variant="secondary" className="bg-black/80 backdrop-blur-md" onClick={cancelSelecting}>
+            {t('dishes.cancelSelecting')}
+          </Button>
           <Button onClick={finishSelecting}>
             {t('dishes.doneSelecting', { count: plannedCount })}
           </Button>
@@ -444,7 +526,7 @@ export function DishesScreen() {
 
       <ActionSheet
         open={confirmClear}
-        title={t('sets.clearConfirm')}
+        title={clearScope || t('sets.clearConfirmEmpty')}
         onClose={() => setConfirmClear(false)}
         actions={[{
           label: t('sets.clearPlan'),
@@ -500,8 +582,13 @@ export function DishesScreen() {
             setDetail(null);
           }}
           onDelete={() => {
-            removeDish.mutate(detail.id);
-            toast.show(`${detail.name} удалено`);
+            const { id, name } = detail;
+            removeDish.mutate(id);
+            // Удаление блюда — мягкое, поэтому у него есть «Отменить»,
+            // как у продуктов (D-009, обзор 09-26, U-1)
+            toast.show(`${name} удалено`, {
+              action: { label: t('common.undo'), onClick: () => restoreDish.mutate(id) },
+            });
             setDetail(null);
           }}
         />

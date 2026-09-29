@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ChevronLeft, Pencil, Star, Trash2 } from 'lucide-react';
-import { Button } from '@/shared/ui';
+import { Button, useToast } from '@/shared/ui';
 import { useCurrentKitchen } from '@/shared/hooks/useKitchens';
 import { useProducts, useToggleProduct } from '@/shared/hooks/useProducts';
 import { formatNumber } from '@/shared/lib/text';
@@ -11,8 +11,10 @@ import type { DishWithStatus } from '@/shared/api/repo';
 import { CookedSheet } from './CookedSheet';
 
 /**
- * Карточка блюда. Недостающие ингредиенты кликабельны поштучно или все разом —
- * без этого цепочка «хочу салат → купить огурцы» обрывается.
+ * Карточка блюда. Недостающих ингредиентов касание меняет одно: ставит им
+ * «есть дома». Купить их не нужно добавлять — продукт без наличия и так лежит
+ * в «Купить», а с блюдом в меню приходит туда с количеством. Раньше то же
+ * действие звалось «Добавить недостающее» и читалось наоборот (U-2).
  */
 export function DishDetail({
   dish, onClose, onToggleFavorite, onDelete, onCooked, onEdit,
@@ -27,6 +29,7 @@ export function DishDetail({
   const [cookedOpen, setCookedOpen] = useState(false);
   const kitchenId = useCurrentKitchen()?.id ?? '';
   const toggleProduct = useToggleProduct(kitchenId);
+  const toast = useToast();
   const missing = new Set(dish.missingNames);
   const recipe = recipeFor(dish);
   // Библиотека картинок пока пустая: битый снимок прячем, как в плитке (п. 29)
@@ -36,14 +39,30 @@ export function DishDetail({
   const { data: products = [] } = useProducts(kitchenId);
   const unitOf = useMemo(() => new Map(products.map((p) => [p.id, p.unit])), [products]);
 
-  const addAll = () => {
-    for (const ingredient of dish.ingredients ?? []) {
-      if (ingredient.product_id && missing.has(ingredient.product_name)) {
-        toggleProduct(ingredient.product_id, true);
-      }
-    }
-    onClose();
+  // Escape закрывает карточку, как и любое другое окно: в Modal это есть,
+  // а карточка блюда — своя разметка, и клавиша не работала
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  /** Отметить наличие — поштучно или всё разом, с возвратом через тост. */
+  const markInStock = (ids: string[], close: boolean) => {
+    if (ids.length === 0) return;
+    for (const id of ids) toggleProduct(id, true);
+    toast.show(t('dishes.markedInStock'), {
+      action: { label: t('common.undo'), onClick: () => ids.forEach((id) => toggleProduct(id, false)) },
+    });
+    if (close) onClose();
   };
+
+  const markAll = () => markInStock(
+    (dish.ingredients ?? [])
+      .filter((i) => i.product_id && missing.has(i.product_name))
+      .map((i) => i.product_id!),
+    true,
+  );
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
@@ -93,7 +112,8 @@ export function DishDetail({
                 key={ingredient.id}
                 type="button"
                 disabled={!absent || !ingredient.product_id}
-                onClick={() => ingredient.product_id && toggleProduct(ingredient.product_id, true)}
+                aria-label={t('dishes.markInStockOne', { name: ingredient.product_name })}
+                onClick={() => ingredient.product_id && markInStock([ingredient.product_id], false)}
                 className="flex w-full items-center gap-2.5 border-b border-line py-2.5 text-left text-body last:border-0"
               >
                 <span className={cn('h-[7px] w-[7px] shrink-0 rounded-full',
@@ -108,7 +128,10 @@ export function DishDetail({
                     </span>
                   )}
                 </span>
-                {absent && <span className="text-caption text-accent">+</span>}
+                {/* Не «+»: касание не добавляет в покупки, а снимает нехватку */}
+                {absent && ingredient.product_id && (
+                  <span className="shrink-0 text-caption text-accent">{t('dishes.inStockShort')}</span>
+                )}
               </button>
             );
           })}
@@ -127,7 +150,7 @@ export function DishDetail({
 
           <div className="mt-5 flex justify-center gap-2">
             {dish.missingCount > 0 && (
-              <Button onClick={addAll}>{t('dishes.addMissing')}</Button>
+              <Button variant="secondary" onClick={markAll}>{t('dishes.markInStock')}</Button>
             )}
             {/* Единственный выход блюда из плана и единственное место,
                 где продукты уходят из наличия */}

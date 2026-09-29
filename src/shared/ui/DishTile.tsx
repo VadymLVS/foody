@@ -53,7 +53,7 @@ export function DishTile({ dish, selected, selectable, onClick }: Props) {
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); }
       }}
       className={cn(
-        'relative mb-1.5 block w-full cursor-pointer break-inside-avoid rounded-tile',
+        'relative mb-1.5 block w-full cursor-pointer rounded-tile',
         'border-[0.5px] transition-colors duration-200',
         selected ? 'border-accent/70' : 'border-transparent',
       )}

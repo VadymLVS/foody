@@ -11,12 +11,14 @@ export interface SheetAction {
 interface Props {
   open: boolean;
   title?: string;
+  /** Что именно случится — для подтверждений необратимого (обзор 09-26, U-1). */
+  note?: string;
   actions: SheetAction[];
   onClose: () => void;
 }
 
 /** Контекстное меню продукта. Пункты высотой 52px — попасть пальцем на ходу. */
-export function ActionSheet({ open, title, actions, onClose }: Props) {
+export function ActionSheet({ open, title, note, actions, onClose }: Props) {
   if (!open) return null;
 
   return (
@@ -31,6 +33,9 @@ export function ActionSheet({ open, title, actions, onClose }: Props) {
         <div className="mx-auto my-3 h-1 w-9 rounded-full bg-line" />
         {title && (
           <p className="px-4 pb-2 text-caption text-text-muted">{title}</p>
+        )}
+        {note && (
+          <p className="px-4 pb-2 text-micro text-text-dim">{note}</p>
         )}
         {actions.map(({ label, Icon, onClick, danger }) => (
           <button

@@ -6,6 +6,12 @@ interface ToastData {
   message: string;
   action?: { label: string; onClick: () => void };
   tone?: 'default' | 'danger';
+  /**
+   * Одно и то же действие подряд показывает один тост, а не стопку.
+   * В магазине человек выключает продукты один за другим, и десять
+   * сообщений «количество сброшено» закрыли бы весь список (п. 41).
+   */
+  key?: string;
 }
 
 interface ToastApi {
@@ -20,7 +26,10 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
 
   const show = useCallback<ToastApi['show']>((message, options) => {
     const id = Date.now() + Math.random();
-    setToasts((prev) => [...prev, { id, message, ...options }]);
+    setToasts((prev) => {
+      const kept = options?.key ? prev.filter((t) => t.key !== options.key) : prev;
+      return [...kept, { id, message, ...options }];
+    });
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), DURATION);
   }, []);
 

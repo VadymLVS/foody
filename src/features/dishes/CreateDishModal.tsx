@@ -149,7 +149,8 @@ export function CreateDishModal({ kitchenId, open, initialName = '', onCreated, 
           <p className="mb-2 text-caption text-text-dim">{t('dishes.create.empty')}</p>
         )}
 
-        <div className="max-h-[32vh] overflow-y-auto">
+        {/* Без своей прокрутки: высотой и прокруткой занимается сам модал (R-7) */}
+        <div>
           {picked.map((product) => (
             <div key={product.id} className="flex h-12 items-center gap-1 border-b border-line">
               <span className="min-w-0 flex-1 truncate text-body">{product.name}</span>

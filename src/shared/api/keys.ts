@@ -3,6 +3,7 @@ export const qk = {
   session:    ['session'] as const,
   kitchens:   ['kitchens'] as const,
   members:    (k: string) => ['members', k] as const,
+  invite:     (k: string) => ['invite', k] as const,
   categories: (k: string) => ['categories', k] as const,
   products:   (k: string) => ['products', k] as const,
   dishes:     (k: string) => ['dishes', k] as const,

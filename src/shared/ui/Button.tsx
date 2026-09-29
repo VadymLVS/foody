@@ -13,8 +13,13 @@ const variants: Record<Variant, string> = {
   ghost:     'text-accent active:bg-accent/10',
 };
 
+/**
+ * У размера sm вид прежний — 32 px, — а палец попадает в 44: вокруг кнопки
+ * лежит невидимая зона (выбор Vadym по U-4, как у вкладок категорий).
+ * Правило 44 px — D-014.
+ */
 const sizes: Record<Size, string> = {
-  sm: 'h-8 px-3.5 text-micro',
+  sm: 'h-8 px-3.5 text-micro relative before:absolute before:-inset-y-1.5 before:inset-x-0 before:content-[""]',
   md: 'h-10 px-5 text-body',
   lg: 'h-12 px-6 text-body',
 };

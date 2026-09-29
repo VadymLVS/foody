@@ -151,6 +151,11 @@ export function SettingsScreen() {
           autoFocus
         />
       </Modal>
+      {/* Версия сборки: без неё нельзя понять, доехало обновление или нет (R-10) */}
+      <p className="pb-2 text-center text-micro text-text-dim">
+        {t('settings.version', { version: __BUILD_VERSION__ })}
+      </p>
+
       <BottomNav />
     </div>
   );

@@ -4,6 +4,7 @@ import { Input } from '@/shared/ui';
 import { repo } from '@/shared/api';
 import { useCategories, useCreateProduct, useProducts, useSuggestions, useUpdateProduct } from '@/shared/hooks/useProducts';
 import { norm, searchByName, SEARCH_MIN_LENGTH } from '@/shared/lib/text';
+import { useTapSelect } from '@/shared/lib/tapSelect';
 import { t, unitLabel } from '@/shared/lib/i18n';
 import type { Product, Unit } from '@/shared/db/types';
 
@@ -77,6 +78,8 @@ export function ProductPicker({ kitchenId, pickedIds, placeholder, onPick, onErr
     );
   };
 
+  // Выбор — на отпускании касания: с открытой клавиатурой onClick не доходит (п. 43)
+  const tap = useTapSelect();
   const row = 'flex h-11 w-full items-center justify-between gap-2 px-3 text-left text-body active:bg-surface-2';
   const hasAny = fromKitchen.length + alreadyPicked.length + fromLibrary.length > 0 || (active && !exactExists);
 
@@ -86,7 +89,7 @@ export function ProductPicker({ kitchenId, pickedIds, placeholder, onPick, onErr
       {active && hasAny && (
         <div className="mt-1 overflow-hidden rounded-sm border border-line">
           {fromKitchen.map((product) => (
-            <button key={product.id} type="button" onClick={() => pick(product)} className={row}>
+            <button key={product.id} type="button" {...tap(() => pick(product))} className={row}>
               {product.name}
               <span className="text-caption text-text-dim">{unitLabel(product.unit)}</span>
             </button>
@@ -107,7 +110,9 @@ export function ProductPicker({ kitchenId, pickedIds, placeholder, onPick, onErr
               key={s.key}
               type="button"
               disabled={createProduct.isPending}
-              onClick={() => create({ name: s.name, unit: s.unit, categoryKey: s.categoryKey, libraryKey: s.key })}
+              {...tap(() => create({
+                name: s.name, unit: s.unit, categoryKey: s.categoryKey, libraryKey: s.key,
+              }))}
               className={row}
             >
               <span className="flex items-center gap-2">
@@ -122,7 +127,7 @@ export function ProductPicker({ kitchenId, pickedIds, placeholder, onPick, onErr
             <button
               type="button"
               disabled={createProduct.isPending}
-              onClick={() => create({ name: q, unit: 'pcs', categoryKey: null, libraryKey: null })}
+              {...tap(() => create({ name: q, unit: 'pcs', categoryKey: null, libraryKey: null }))}
               className={`${row} justify-start text-accent`}
             >
               <Plus className="h-4 w-4" />

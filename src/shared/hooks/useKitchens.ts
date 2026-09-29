@@ -26,6 +26,19 @@ export function useCurrentKitchen() {
   return list.find((k) => k.id === currentKitchenId) ?? list[0] ?? null;
 }
 
+/**
+ * Ссылка-приглашение: отдельный запрос и только для владельца.
+ * Код лежит в базе за правами, поэтому участнику он просто не придёт (B-3).
+ */
+export function useInvite(kitchenId: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: qk.invite(kitchenId ?? ''),
+    queryFn: () => kitchens.invite(kitchenId!),
+    enabled: Boolean(kitchenId) && enabled,
+    staleTime: 60_000,
+  });
+}
+
 export function useMembers(kitchenId: string | null) {
   return useQuery({
     queryKey: qk.members(kitchenId ?? ''),
@@ -70,7 +83,10 @@ export function useKitchenActions() {
 
   const regenerateInvite = useMutation({
     mutationFn: (id: string) => kitchens.regenerateInvite(id),
-    onSuccess: invalidate,
+    onSuccess: (_code, id) => {
+      void invalidate();
+      void queryClient.invalidateQueries({ queryKey: qk.invite(id) });
+    },
   });
 
   const removeMember = useMutation({

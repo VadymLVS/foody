@@ -10,7 +10,9 @@ export interface Profile {
 
 export interface Kitchen {
   id: string; name: string; owner_id: string;
-  invite_code: string; invite_expires_at: string | null; invites_enabled: boolean;
+  // invite_code в клиент не приходит: столбец закрыт правами, код отдаёт
+  // public.kitchen_invite() владельцу кухни (миграция 0008, B-3)
+  invite_expires_at: string | null; invites_enabled: boolean;
 }
 
 export interface Member {

@@ -278,6 +278,15 @@ export const demoRepo: Repo = {
     ids.forEach(emit);
   },
 
+  async bulkPatch(ids, patch) {
+    await delay();
+    const set = new Set(ids);
+    state.products = state.products.map((p) =>
+      set.has(p.id) ? { ...p, ...patch, updated_at: new Date().toISOString() } : p);
+    persist();
+    ids.forEach(emit);
+  },
+
   async countQuantifiedUsage(productId: string) {
     return allDishes()
       .filter((d) => !state.deletedDishes.includes(d.id))
@@ -368,6 +377,12 @@ export const demoRepo: Repo = {
     await delay();
     state.deletedDishes = [...state.deletedDishes, id];
     state.planned = state.planned.filter((p) => p !== id);
+    persist();
+  },
+
+  async restoreDish(id) {
+    await delay();
+    state.deletedDishes = state.deletedDishes.filter((d) => d !== id);
     persist();
   },
 

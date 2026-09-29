@@ -89,8 +89,12 @@ export function usePlanActions(kitchenId: string) {
     mutationFn: (id: string) => repo.deleteDish(id),
     onSuccess: refresh,
   });
+  const restoreDish = useMutation({
+    mutationFn: (id: string) => repo.restoreDish(id),
+    onSuccess: refresh,
+  });
 
-  return { add, remove, favorite, removeDish };
+  return { add, remove, favorite, removeDish, restoreDish };
 }
 
 /**

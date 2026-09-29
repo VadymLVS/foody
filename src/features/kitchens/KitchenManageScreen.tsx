@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Copy, Crown, RefreshCw, Share2 } from 'lucide-react';
 import { Button, Input, Modal, useToast } from '@/shared/ui';
 import { formatExpiry, inviteUrl } from '@/shared/api';
-import { useCurrentKitchen, useKitchenActions, useMembers } from '@/shared/hooks/useKitchens';
+import { useCurrentKitchen, useInvite, useKitchenActions, useMembers } from '@/shared/hooks/useKitchens';
 import { useSession } from '@/shared/hooks/useSession';
 
 export function KitchenManageScreen() {
@@ -19,9 +19,15 @@ export function KitchenManageScreen() {
   const [name, setName] = useState(kitchen?.name ?? '');
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState('');
+  // Удаление человека из кухни было мгновенным, да ещё зоной касания
+  // в полтора пальца (обзор 09-26, U-1 и U-4)
+  const [kickUserId, setKickUserId] = useState<string | null>(null);
+  const kicked = members.find((m) => m.user_id === kickUserId) ?? null;
 
   const isOwner = kitchen?.role === 'owner';
-  const link = kitchen?.inviteCode ? inviteUrl(kitchen.inviteCode) : null;
+  // Код приглашения приходит отдельным запросом и только владельцу (B-3)
+  const { data: invite, isLoading: inviteLoading } = useInvite(kitchen?.id ?? null, isOwner);
+  const link = invite ? inviteUrl(invite.code) : null;
 
   const copyLink = async () => {
     if (!link) return;
@@ -69,22 +75,24 @@ export function KitchenManageScreen() {
         </Button>
       </div>
 
-      {isOwner && link && (
+      {isOwner && (
         <section className="mt-6">
           <h2 className="mb-2 px-1 text-small uppercase tracking-wide text-text-muted">
             Приглашение
           </h2>
           <div className="rounded-md bg-surface p-4 shadow-card">
-            <p className="truncate text-caption text-text-muted">{link}</p>
+            <p className="truncate text-caption text-text-muted">
+              {link ?? (inviteLoading ? 'Загружаем ссылку…' : 'Ссылка недоступна')}
+            </p>
             <p className="mt-1 text-small text-text-muted">
-              {formatExpiry(kitchen.inviteExpiresAt)}
+              {formatExpiry(invite?.expiresAt ?? kitchen.inviteExpiresAt)}
             </p>
             <div className="mt-3 flex gap-2">
-              <Button size="sm" variant="secondary" onClick={shareLink}>
+              <Button size="sm" variant="secondary" disabled={!link} onClick={shareLink}>
                 <Share2 className="h-4 w-4" />
                 Поделиться
               </Button>
-              <Button size="sm" variant="secondary" onClick={copyLink}>
+              <Button size="sm" variant="secondary" disabled={!link} onClick={copyLink}>
                 <Copy className="h-4 w-4" />
                 Копировать
               </Button>
@@ -118,16 +126,22 @@ export function KitchenManageScreen() {
             <div key={member.user_id} className="flex items-center justify-between gap-3 px-4 py-3">
               <div className="min-w-0">
                 <p className="flex items-center gap-1.5 truncate text-body-semibold">
-                  {member.profile?.full_name ?? member.profile?.email ?? 'Участник'}
+                  {member.profile?.full_name || member.profile?.email || 'Участник'}
                   {member.role === 'owner' && <Crown className="h-4 w-4 shrink-0 text-warning" />}
                 </p>
-                <p className="truncate text-small text-text-muted">{member.profile?.email}</p>
+                {/* Почта — только своя: чужую база не отдаёт (B-6) */}
+                <p className="truncate text-small text-text-muted">
+                  {member.user_id === session?.userId
+                    ? member.profile?.email
+                    : member.role === 'owner' ? 'Владелец кухни' : 'Участник кухни'}
+                </p>
               </div>
               {isOwner && member.user_id !== session?.userId && (
                 <button
                   type="button"
-                  onClick={() => removeMember.mutate({ id: kitchen.id, userId: member.user_id })}
-                  className="shrink-0 text-caption text-danger"
+                  onClick={() => setKickUserId(member.user_id)}
+                  aria-label={`Удалить из кухни: ${member.profile?.full_name || 'участник'}`}
+                  className="-mr-2 flex h-11 shrink-0 items-center px-2 text-caption text-danger"
                 >
                   Удалить
                 </button>
@@ -182,6 +196,35 @@ export function KitchenManageScreen() {
         }
       >
         <Input value={name} onChange={(e) => setName(e.target.value)} autoFocus />
+      </Modal>
+
+      <Modal
+        open={kicked !== null}
+        title="Удалить из кухни?"
+        onClose={() => setKickUserId(null)}
+        footer={
+          <>
+            <Button variant="secondary" fullWidth onClick={() => setKickUserId(null)}>
+              Отмена
+            </Button>
+            <Button
+              variant="danger"
+              fullWidth
+              loading={removeMember.isPending}
+              onClick={() => kicked && removeMember.mutate(
+                { id: kitchen.id, userId: kicked.user_id },
+                { onSuccess: () => setKickUserId(null) },
+              )}
+            >
+              Удалить
+            </Button>
+          </>
+        }
+      >
+        <p className="text-caption text-text-muted">
+          {(kicked?.profile?.full_name || 'Участник')} потеряет доступ к продуктам, блюдам
+          и меню этой кухни. Вернуться можно будет только по новой ссылке-приглашению.
+        </p>
       </Modal>
 
       {/* Удаление кухни необратимо и задевает других людей —
