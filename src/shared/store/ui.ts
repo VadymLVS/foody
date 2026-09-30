@@ -9,6 +9,12 @@ interface UIState {
   search: string;
   categoryFilter: string;
   statusFilter: StatusFilter;
+  /**
+   * Выбранный список покупок (п. 45). Это отдельное измерение от statusFilter:
+   * внутри списка показываются и купленные, и некупленные позиции, поэтому
+   * фильтры состояния при активном списке не применяются.
+   */
+  listFilter: string | null;
   activeProductId: string | null;
 
   // Из user_settings; до загрузки — разумные значения по умолчанию
@@ -22,6 +28,7 @@ interface UIState {
   setSearch: (q: string) => void;
   setCategoryFilter: (id: string) => void;
   setStatusFilter: (f: StatusFilter) => void;
+  setListFilter: (id: string | null) => void;
   setActiveProduct: (id: string | null) => void;
   setPreferences: (p: { showRowImages?: boolean; playfulReactions?: boolean }) => void;
   beginOp: (id: string, op: Omit<PendingOp, 'ts'>) => void;
@@ -38,15 +45,19 @@ export const useUI = create<UIState>((set, get) => ({
   // По умолчанию весь список (решение Vadym, backlog п. 14). Раньше был «Купить»
   // с расчётом, что приложение открывают перед магазином.
   statusFilter: 'all',
+  listFilter: null,
   activeProductId: null,
   showRowImages: true,
   playfulReactions: true,
   pendingOps: new Map(),
 
-  setKitchen: (id) => set({ currentKitchenId: id, activeProductId: null, search: '' }),
+  setKitchen: (id) => set({ currentKitchenId: id, activeProductId: null, search: '', listFilter: null }),
   setSearch: (search) => set({ search }),
   setCategoryFilter: (categoryFilter) => set({ categoryFilter }),
-  setStatusFilter: (statusFilter) => set({ statusFilter }),
+  setStatusFilter: (statusFilter) => set({ statusFilter, listFilter: null }),
+  // Выбор списка сбрасывает поиск: список короткий, искать в нём нечего,
+  // а незамеченная строка поиска выглядела бы как пустой список
+  setListFilter: (listFilter) => set({ listFilter, search: '' }),
   setActiveProduct: (activeProductId) => set({ activeProductId }),
   setPreferences: (p) => set(p),
 

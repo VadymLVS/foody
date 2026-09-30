@@ -8,13 +8,6 @@ export interface Profile {
   id: string; email: string; full_name: string | null; avatar_url: string | null;
 }
 
-export interface Kitchen {
-  id: string; name: string; owner_id: string;
-  // invite_code в клиент не приходит: столбец закрыт правами, код отдаёт
-  // public.kitchen_invite() владельцу кухни (миграция 0008, B-3)
-  invite_expires_at: string | null; invites_enabled: boolean;
-}
-
 export interface Member {
   kitchen_id: string; user_id: string; role: Role; joined_at: string; profile?: Profile;
 }
@@ -62,12 +55,3 @@ export interface PlanNeedRow {
   total_quantity: number | null; dish_count: number;
   dishes: Array<{ dish: string; quantity: number | null; owner: string | null }>;
 }
-
-export interface UserSettings {
-  user_id: string;
-  language: 'ru' | 'uk' | 'en' | 'es';
-  show_row_images: boolean;
-  playful_reactions: boolean;
-}
-
-export type Database = Record<string, unknown>;

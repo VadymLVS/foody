@@ -76,6 +76,30 @@ export interface SetsListing {
   usedLibraryKeys: string[];
 }
 
+/**
+ * Список покупок (backlog п. 45). Это фильтр, а не действие: выбор списка
+ * ничего не меняет в продуктах, он сужает выдачу. Количества у позиции нет —
+ * количество живёт у продукта (D-030).
+ *
+ * kind: 'regular' — постоянная заготовка («Обычная закупка»);
+ *       'once'    — разовый «купить сейчас», его создают друг для друга,
+ *                   он показывается в приоритете и закрывается после поездки.
+ */
+export interface ProductList {
+  id: string;
+  name: string;
+  kind: 'regular' | 'once';
+  productIds: string[];
+  createdBy: string | null;
+  createdAt: string;
+}
+
+export interface ProductListInput {
+  name: string;
+  kind: 'regular' | 'once';
+  productIds: string[];
+}
+
 export interface Repo {
   readonly isDemo: boolean;
   currentUserId(): string;
@@ -100,6 +124,15 @@ export interface Repo {
    * одним запросом, а не сотней.
    */
   bulkPatch(ids: string[], patch: ProductPatch): Promise<void>;
+
+  /** Списки покупок кухни — только открытые; закрытые остаются в базе историей. */
+  listProductLists(kitchenId: string): Promise<ProductList[]>;
+  saveProductList(kitchenId: string, input: ProductListInput, id?: string): Promise<string>;
+  deleteProductList(id: string): Promise<void>;
+  /** Поездка закончена: список уходит из выдачи, но остаётся в истории. */
+  closeProductList(id: string): Promise<void>;
+  /** Разовый список создаёт один человек, а видит другой — без перезапуска. */
+  subscribeProductLists(kitchenId: string, onChange: () => void): () => void;
   /** Сколько ингредиентов в блюдах ссылаются на продукт с указанным количеством. */
   countQuantifiedUsage(productId: string): Promise<number>;
   softDeleteProduct(id: string): Promise<void>;

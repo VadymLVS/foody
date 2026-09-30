@@ -1,6 +1,9 @@
 import { supabase, hasSupabaseCredentials } from './supabase';
 import type { Category, DeckCard, DishIngredient, PlanNeedRow, Product, Unit } from '@/shared/db/types';
-import type { DishSet, DishWithStatus, NewDish, NewProduct, ProductPatch, Repo, RealtimeEvent } from './repo';
+import type {
+  DishSet, DishWithStatus, NewDish, NewProduct, ProductList, ProductListInput,
+  ProductPatch, Repo, RealtimeEvent,
+} from './repo';
 import { productLabel } from '@/shared/lib/i18n';
 import type { DietProfile } from '@/shared/lib/diet';
 
@@ -156,6 +159,86 @@ export const supabaseRepo: Repo = {
     const { error } = await supabase.from('products')
       .update({ ...patch, updated_by: await uid() }).in('id', ids);
     if (error) throw new Error(error.message);
+  },
+
+  async listProductLists(kitchenId) {
+    const rows = unwrap(
+      await supabase.from('product_lists')
+        .select('id, name, kind, created_by, created_at, product_list_items(product_id)')
+        .eq('kitchen_id', kitchenId)
+        .is('closed_at', null)
+        .order('created_at'),
+    ) as unknown as Array<{
+      id: string; name: string; kind: 'regular' | 'once';
+      created_by: string | null; created_at: string;
+      product_list_items: Array<{ product_id: string }> | null;
+    }>;
+    return rows.map<ProductList>((row) => ({
+      id: row.id,
+      name: row.name,
+      kind: row.kind,
+      createdBy: row.created_by,
+      createdAt: row.created_at,
+      productIds: (row.product_list_items ?? []).map((i) => i.product_id),
+    }));
+  },
+
+  async saveProductList(kitchenId, input: ProductListInput, id) {
+    let listId = id;
+    if (listId) {
+      const { error } = await supabase.from('product_lists')
+        .update({ name: input.name.trim(), kind: input.kind }).eq('id', listId);
+      if (error) throw new Error(error.message);
+      // Состав заменяется целиком — как у блюд и наборов: сравнивать дороже
+      const del = await supabase.from('product_list_items').delete().eq('list_id', listId);
+      if (del.error) throw new Error(del.error.message);
+    } else {
+      const created = unwrap(
+        await supabase.from('product_lists').insert({
+          kitchen_id: kitchenId,
+          name: input.name.trim(),
+          kind: input.kind,
+          created_by: await uid(),
+        }).select('id').single(),
+      ) as { id: string };
+      listId = created.id;
+    }
+
+    if (input.productIds.length > 0) {
+      const { error } = await supabase.from('product_list_items').insert(
+        input.productIds.map((productId) => ({ list_id: listId!, product_id: productId })),
+      );
+      if (error) throw new Error(error.message);
+    }
+    return listId;
+  },
+
+  async deleteProductList(id) {
+    const { error } = await supabase.from('product_lists').delete().eq('id', id);
+    if (error) throw new Error(error.message);
+  },
+
+  async closeProductList(id) {
+    const { error } = await supabase.from('product_lists')
+      .update({ closed_at: new Date().toISOString() }).eq('id', id);
+    if (error) throw new Error(error.message);
+  },
+
+  subscribeProductLists(kitchenId, onChange) {
+    // Суффикс в имени канала — по той же причине, что и у продуктов (п. 7)
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const channel = supabase
+      .channel(`kitchen:${kitchenId}:lists:${suffix}`)
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'product_lists', filter: `kitchen_id=eq.${kitchenId}` },
+        () => onChange())
+      // Позиции фильтровать по кухне нельзя — её в строке нет; лишние
+      // события дешевле, чем отсутствующие: обработчик просто перечитывает списки
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'product_list_items' },
+        () => onChange())
+      .subscribe();
+    return () => { void supabase.removeChannel(channel); };
   },
 
   async countQuantifiedUsage(productId: string) {
