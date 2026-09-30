@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
+import { cn } from '@/shared/lib/cn';
 
 interface Props {
   open: boolean;
@@ -7,6 +8,19 @@ interface Props {
   onClose: () => void;
   children: React.ReactNode;
   footer?: React.ReactNode;
+  /**
+   * Во всю видимую высоту, а не по содержимому (замечание Vadym 09-30: «подвинь
+   * панель повыше, а то не видно рабочей зоны»). Короткая форма прижималась
+   * к низу экрана, и сверху оставалась бесполезная чернота.
+   */
+  tall?: boolean;
+  /**
+   * Куда ставить фокус при открытии. По умолчанию — первое поле ввода.
+   * `false` — никуда: в форме списка первым делом выбирают вид, и прыжок
+   * в название с выездом клавиатуры мешал (замечание Vadym 09-30).
+   * Точку можно задать и разметкой: атрибут `data-autofocus` на элементе.
+   */
+  autoFocus?: boolean;
 }
 
 /**
@@ -30,7 +44,7 @@ interface Props {
  * от всей страницы, и низ модала оказывается под клавиатурой. Поэтому размер
  * и сдвиг берём у visualViewport — тогда кнопки всегда над клавиатурой.
  */
-export function Modal({ open, title, onClose, children, footer }: Props) {
+export function Modal({ open, title, onClose, children, footer, tall, autoFocus = true }: Props) {
   const contentRef = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState<{ top: number; height: number } | null>(null);
 
@@ -54,12 +68,12 @@ export function Modal({ open, title, onClose, children, footer }: Props) {
 
   // Фокус выставляется ровно один раз, и только на поле ввода, не на крестик
   useEffect(() => {
-    if (!open) return;
-    const field = contentRef.current?.querySelector<HTMLElement>(
-      'input:not([type="checkbox"]), select, textarea',
-    );
+    if (!open || !autoFocus) return;
+    const root = contentRef.current;
+    const field = root?.querySelector<HTMLElement>('[data-autofocus]')
+      ?? root?.querySelector<HTMLElement>('input:not([type="checkbox"]), select, textarea');
     field?.focus();
-  }, [open]);
+  }, [open, autoFocus]);
 
   // Видимая часть окна: меняется, когда открывается клавиатура
   useEffect(() => {
@@ -88,7 +102,10 @@ export function Modal({ open, title, onClose, children, footer }: Props) {
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="relative flex max-h-full w-full max-w-[420px] flex-col rounded-t-lg bg-surface sm:rounded-lg"
+        className={cn(
+          'relative flex w-full max-w-[420px] flex-col rounded-t-lg bg-surface sm:rounded-lg',
+          tall ? 'h-full' : 'max-h-full',
+        )}
       >
         <div className="flex shrink-0 items-center justify-between px-4 pb-3 pt-4">
           <h2 className="text-headline">{title}</h2>

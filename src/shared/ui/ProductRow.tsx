@@ -21,6 +21,33 @@ interface Props {
   onExpand: () => void;
   onQuantityChange: (next: number) => void;
   onMenu: () => void;
+  /**
+   * Заявка списка вместо количества продукта (п. 46).
+   *
+   * Задано — строка показывает и правит это число, лаймом: внутри списка
+   * покупок «2 кг» означает «взять в эту поездку», а не «лежит дома».
+   * Решение Vadym (10-01): заявка живёт только в списке и количество
+   * продукта не трогает.
+   *
+   * Не задано (`undefined`) — обычное поведение: `products.quantity` серым.
+   * Ноль — «не указано», как и у количества продукта (D-030).
+   */
+  listQuantity?: number;
+  /**
+   * Не показывать потребности блюд и лаймовую грань слева.
+   *
+   * В быстром списке закуп идёт без планирования под блюда, поэтому
+   * потребностей там не видно вовсе. Грань означает «нужно для блюда»;
+   * позиция списка с заявкой — просто продукт с заявкой, и метить её тем же
+   * знаком значит размыть сам знак (решение Vadym 10-01).
+   */
+  hideNeeds?: boolean;
+  /** Своё состояние ползунка: в сборке списка он значит «берём», а не наличие. */
+  checked?: boolean;
+  /** Подпись ползунка для чтения с экрана, если он значит не наличие. */
+  toggleLabel?: string;
+  /** Скрыть «⋯»: в экране сборки списка меню продукта открывать нечего. */
+  hideMenu?: boolean;
 }
 
 const LONG_PRESS_MS = 500;
@@ -38,7 +65,11 @@ const STEP: Record<Product['unit'], number> = {
  */
 export function ProductRow({
   product, need, showImage, expanded, onToggle, onExpand, onQuantityChange, onMenu,
+  listQuantity, hideNeeds = false, checked, toggleLabel, hideMenu = false,
 }: Props) {
+  /** Строка правит заявку списка, а не количество продукта. */
+  const listMode = listQuantity !== undefined;
+  const on = checked ?? product.in_stock;
   const timer = useRef<number>();
   const origin = useRef<{ x: number; y: number } | null>(null);
   // Долгое нажатие уже открыло меню — следующий click строки надо проглотить,
@@ -51,7 +82,9 @@ export function ProductRow({
   };
   const image = product.library_key ? `/library/products/${product.library_key}.webp` : null;
   const hasImage = showImage && Boolean(image);
-  const hasNeed = Boolean(need);
+  const hasNeed = !hideNeeds && Boolean(need);
+  /** Число у названия: «сколько лежит» серым или «сколько взять» лаймом. */
+  const shownQuantity = listQuantity ?? product.quantity;
 
   /*
    * Тап и долгое нажатие ловятся на всей строке, а не на названии.
@@ -106,7 +139,7 @@ export function ProductRow({
         )}
       >
         {/* Лаймовая грань — «нужно для плана», а не «просто закончилось» */}
-        {need && <span className="absolute inset-y-0 left-0 z-[3] w-0.5 bg-accent" />}
+        {hasNeed && <span className="absolute inset-y-0 left-0 z-[3] w-0.5 bg-accent" />}
 
         {hasImage && (
           <>
@@ -125,18 +158,22 @@ export function ProductRow({
         )}
 
         <span className="pointer-events-none relative z-[2] flex min-w-0 flex-1 flex-col justify-center gap-0.5 pr-3 text-left">
-          <span className={cn('truncate text-body', product.in_stock ? 'text-text-primary' : 'text-[#8A8A8A]')}>
+          <span className={cn(
+            'truncate text-body',
+            on ? 'text-text-primary' : 'text-[#8A8A8A]',
+          )}>
             {product.name}
-            {/* Своё количество видно всегда: «сколько есть/брать» серым, «сколько нужно блюду» лаймом ниже (п. 22) */}
-            {product.quantity > 0 && (
-              <span className="ml-1.5 text-micro text-text-muted">
-                {formatNumber(product.quantity)} {unitLabel(product.unit)}
+            {/* Своё количество видно всегда: «сколько есть/брать» серым, «сколько нужно блюду» лаймом ниже (п. 22).
+                В режиме списка здесь стоит заявка поездки — лаймом, как у потребностей блюд (просьба Vadym 09-30) */}
+            {shownQuantity > 0 && (
+              <span className={cn('ml-1.5 text-micro', listMode ? 'text-accent' : 'text-text-muted')}>
+                {formatNumber(shownQuantity)} {unitLabel(product.unit)}
               </span>
             )}
           </span>
           {/* Количество стоит у блюда, а не у названия: рядом с продуктом
               оно читается как «столько есть», а не «столько нужно» */}
-          {need && (
+          {hasNeed && need && (
             <span className="truncate text-micro text-text-muted">
               {need.dishes.slice(0, 2).map((d, i) => (
                 <span key={`${d.dish}-${i}`}>
@@ -161,9 +198,9 @@ export function ProductRow({
           onPointerDown={(e) => e.stopPropagation()}
         >
           <Toggle
-            checked={product.in_stock}
+            checked={on}
             onChange={onToggle}
-            label={`${product.name} — в наличии`}
+            label={`${product.name} — ${toggleLabel ?? 'в наличии'}`}
           />
         </span>
       </div>
@@ -171,29 +208,36 @@ export function ProductRow({
       {expanded && (
         <div className="mb-0.5 rounded-b-md bg-surface-2 px-3.5 py-3">
           <div className="flex items-center justify-between">
+            {/* Та же панель, что и в обычной строке: свой орган управления
+                придумывать не надо (замечание Vadym 10-01). Подпись другая,
+                потому что число отвечает на другой вопрос: не «сколько лежит
+                дома», а «сколько взять в эту поездку» */}
             <span className="text-caption text-text-muted">
-              Количество, {unitLabel(product.unit)}
+              {listMode ? 'Сколько взять' : 'Количество'}, {unitLabel(product.unit)}
             </span>
             <div className="flex items-center gap-2">
-              <StepButton label="Уменьшить" onClick={() => onQuantityChange(Math.max(0, product.quantity - STEP[product.unit]))} />
+              <StepButton label="Уменьшить" onClick={() => onQuantityChange(Math.max(0, shownQuantity - STEP[product.unit]))} />
               <span className="min-w-[40px] text-center text-body tabular-nums">
-                {formatNumber(product.quantity)}
+                {formatNumber(shownQuantity)}
               </span>
-              <StepButton label="Увеличить" plus onClick={() => onQuantityChange(product.quantity + STEP[product.unit])} />
+              <StepButton label="Увеличить" plus onClick={() => onQuantityChange(shownQuantity + STEP[product.unit])} />
               {/* Видимый путь к правке и удалению: долгое нажатие не найти,
-                  если про него не знать (идея Vadym, backlog п. 11) */}
-              <button
-                type="button"
-                aria-label="Ещё действия"
-                onClick={onMenu}
-                className="ml-1 flex h-11 w-11 items-center justify-center rounded-full text-text-muted active:bg-[#1F1F1F]"
-              >
-                <MoreHorizontal className="h-5 w-5" />
-              </button>
+                  если про него не знать (идея Vadym, backlog п. 11).
+                  В экране сборки списка меню продукта нет — там нечего открывать */}
+              {!hideMenu && (
+                <button
+                  type="button"
+                  aria-label="Ещё действия"
+                  onClick={onMenu}
+                  className="ml-1 flex h-11 w-11 items-center justify-center rounded-full text-text-muted active:bg-[#1F1F1F]"
+                >
+                  <MoreHorizontal className="h-5 w-5" />
+                </button>
+              )}
             </div>
           </div>
 
-          {need && (
+          {hasNeed && need && (
             <div className="mt-3 border-t border-line pt-2.5">
               <p className="mb-2 text-micro text-text-dim">Нужно для</p>
               {need.dishes.map((d) => (

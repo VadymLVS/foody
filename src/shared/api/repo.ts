@@ -77,9 +77,9 @@ export interface SetsListing {
 }
 
 /**
- * Список покупок (backlog п. 45). Это фильтр, а не действие: выбор списка
- * ничего не меняет в продуктах, он сужает выдачу. Количества у позиции нет —
- * количество живёт у продукта (D-030).
+ * Список покупок (backlog п. 45, 46). Выбор списка ничего не меняет
+ * в продуктах — он сужает выдачу. Но у позиции есть своя заявка:
+ * «сколько взять в эту поездку».
  *
  * kind: 'regular' — постоянная заготовка («Обычная закупка»);
  *       'once'    — разовый «купить сейчас», его создают друг для друга,
@@ -89,15 +89,31 @@ export interface ProductList {
   id: string;
   name: string;
   kind: 'regular' | 'once';
-  productIds: string[];
+  items: ProductListItem[];
   createdBy: string | null;
   createdAt: string;
+}
+
+/**
+ * Позиция списка (п. 46, миграция 0010).
+ *
+ * `quantity` — заявка этой поездки, а не количество продукта. Два числа
+ * отвечают на разные вопросы: `products.quantity` — «сколько лежит дома»,
+ * это — «сколько взять». Решение Vadym (10-01): заявка живёт только
+ * в списке и количество продукта не трогает, иначе отметка Алины
+ * «помидоры 1 кг» переписала бы то, сколько помидоров есть дома.
+ *
+ * Ноль значит «не указано» — как у `products.quantity` (D-030).
+ */
+export interface ProductListItem {
+  productId: string;
+  quantity: number;
 }
 
 export interface ProductListInput {
   name: string;
   kind: 'regular' | 'once';
-  productIds: string[];
+  items: ProductListItem[];
 }
 
 export interface Repo {
@@ -128,6 +144,11 @@ export interface Repo {
   /** Списки покупок кухни — только открытые; закрытые остаются в базе историей. */
   listProductLists(kitchenId: string): Promise<ProductList[]>;
   saveProductList(kitchenId: string, input: ProductListInput, id?: string): Promise<string>;
+  /**
+   * Заявка у позиции уже сохранённого списка: её правят прямо в магазине,
+   * не открывая форму. Ноль — «не указано» (п. 46).
+   */
+  setListItemQuantity(listId: string, productId: string, quantity: number): Promise<void>;
   deleteProductList(id: string): Promise<void>;
   /** Поездка закончена: список уходит из выдачи, но остаётся в истории. */
   closeProductList(id: string): Promise<void>;

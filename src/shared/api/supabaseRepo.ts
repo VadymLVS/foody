@@ -76,18 +76,39 @@ export const supabaseRepo: Repo = {
 
   async createProduct(kitchenId, input: NewProduct) {
     // created_by обязателен: политика products_insert требует его равенства auth.uid()
-    return unwrap(
-      await supabase.from('products').insert({
-        kitchen_id: kitchenId,
-        name: input.name,
-        category_id: input.categoryId,
-        unit: input.unit,
-        in_stock: input.inStock,
-        library_key: input.libraryKey ?? null,
-        created_by: await uid(),
-        updated_by: await uid(),
-      }).select().single(),
-    ) as Product;
+    const me = await uid();
+    const { data, error } = await supabase.from('products').insert({
+      kitchen_id: kitchenId,
+      name: input.name,
+      category_id: input.categoryId,
+      unit: input.unit,
+      in_stock: input.inStock,
+      library_key: input.libraryKey ?? null,
+      created_by: me,
+      updated_by: me,
+    }).select().single();
+    if (!error) return data as Product;
+
+    /*
+     * 23505 — продукт с таким названием уже есть: уникальный индекс объявлен
+     * по (kitchen_id, lower(name)) среди неудалённых строк. Для вызывающего
+     * это не ошибка — он хотел продукт с этим названием, отдаём существующий.
+     * Раньше сюда прилетало сырое сообщение Postgres красным тостом, причём
+     * ровно в тот момент, когда человек повторно добавлял позицию в список
+     * (Vadym, 09-30).
+     *
+     * Ищем перебором по кухне, а не через ilike: в названии могут быть % и _,
+     * а это подстановочные знаки — «50% сливки» нашли бы что угодно.
+     */
+    if (error.code !== '23505') throw new Error(error.message);
+    const all = unwrap(
+      await supabase.from('products').select()
+        .eq('kitchen_id', kitchenId).is('deleted_at', null),
+    ) as Product[];
+    const wanted = input.name.trim().toLowerCase();
+    const existing = all.find((p) => p.name.trim().toLowerCase() === wanted);
+    if (!existing) throw new Error(error.message);
+    return existing;
   },
 
   async createProducts(kitchenId, inputs: NewProduct[]) {
@@ -164,14 +185,14 @@ export const supabaseRepo: Repo = {
   async listProductLists(kitchenId) {
     const rows = unwrap(
       await supabase.from('product_lists')
-        .select('id, name, kind, created_by, created_at, product_list_items(product_id)')
+        .select('id, name, kind, created_by, created_at, product_list_items(product_id, quantity)')
         .eq('kitchen_id', kitchenId)
         .is('closed_at', null)
         .order('created_at'),
     ) as unknown as Array<{
       id: string; name: string; kind: 'regular' | 'once';
       created_by: string | null; created_at: string;
-      product_list_items: Array<{ product_id: string }> | null;
+      product_list_items: Array<{ product_id: string; quantity: number | string | null }> | null;
     }>;
     return rows.map<ProductList>((row) => ({
       id: row.id,
@@ -179,7 +200,12 @@ export const supabaseRepo: Repo = {
       kind: row.kind,
       createdBy: row.created_by,
       createdAt: row.created_at,
-      productIds: (row.product_list_items ?? []).map((i) => i.product_id),
+      // numeric приходит из postgres-meta строкой — приводим здесь, чтобы
+      // выше по коду количество всегда было числом
+      items: (row.product_list_items ?? []).map((i) => ({
+        productId: i.product_id,
+        quantity: Number(i.quantity ?? 0),
+      })),
     }));
   },
 
@@ -204,13 +230,25 @@ export const supabaseRepo: Repo = {
       listId = created.id;
     }
 
-    if (input.productIds.length > 0) {
+    if (input.items.length > 0) {
       const { error } = await supabase.from('product_list_items').insert(
-        input.productIds.map((productId) => ({ list_id: listId!, product_id: productId })),
+        input.items.map((item) => ({
+          list_id: listId!,
+          product_id: item.productId,
+          quantity: item.quantity,
+        })),
       );
       if (error) throw new Error(error.message);
     }
     return listId;
+  },
+
+  async setListItemQuantity(listId, productId, quantity) {
+    const { error } = await supabase.from('product_list_items')
+      .update({ quantity })
+      .eq('list_id', listId)
+      .eq('product_id', productId);
+    if (error) throw new Error(error.message);
   },
 
   async deleteProductList(id) {

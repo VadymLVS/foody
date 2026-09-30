@@ -17,6 +17,12 @@ interface PickerProps {
   placeholder: string;
   onPick: (product: Product) => void;
   onError: (message: string) => void;
+  /**
+   * Куда модал ставит фокус при открытии. В форме списка это поиск, а не
+   * название: вид выбирают пальцем, а вводить сразу хочется позицию
+   * (замечание Vadym 09-30).
+   */
+  autoFocus?: boolean;
 }
 
 /**
@@ -31,7 +37,9 @@ interface PickerProps {
  * Уже добавленный продукт не пропадает молча, а показывается строкой «уже добавлено»:
  * раньше на точном названии («Салфетки») список просто становился пустым.
  */
-export function ProductPicker({ kitchenId, pickedIds, placeholder, onPick, onError }: PickerProps) {
+export function ProductPicker({
+  kitchenId, pickedIds, placeholder, onPick, onError, autoFocus,
+}: PickerProps) {
   const { data: products = [] } = useProducts(kitchenId);
   const { data: categories = [] } = useCategories(kitchenId);
   const { data: suggestions = [] } = useSuggestions();
@@ -85,7 +93,12 @@ export function ProductPicker({ kitchenId, pickedIds, placeholder, onPick, onErr
 
   return (
     <div>
-      <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={placeholder} />
+      <Input
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder={placeholder}
+        {...(autoFocus ? { 'data-autofocus': '' } : {})}
+      />
       {active && hasAny && (
         <div className="mt-1 overflow-hidden rounded-sm border border-line">
           {fromKitchen.map((product) => (

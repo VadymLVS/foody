@@ -197,7 +197,7 @@ export function ProductsScreen() {
      * из-под пальца (п. 45).
      */
     if (activeList) {
-      const inList = new Set(activeList.productIds);
+      const inList = new Set(activeList.items.map((i) => i.productId));
       list = list.filter((p) => inList.has(p.id));
     } else {
       const kept = (p: Product) => justToggled.has(p.id);
@@ -212,7 +212,7 @@ export function ProductsScreen() {
   const listDone = useMemo(() => {
     if (!activeList) return 0;
     const byId = new Map(products.map((p) => [p.id, p]));
-    return activeList.productIds.filter((id) => byId.get(id)?.in_stock).length;
+    return activeList.items.filter((i) => byId.get(i.productId)?.in_stock).length;
   }, [activeList, products]);
 
   /*
@@ -222,7 +222,7 @@ export function ProductsScreen() {
   const askedToClose = useRef<string | null>(null);
   useEffect(() => {
     if (!activeList || activeList.kind !== 'once') return;
-    const total = activeList.productIds.length;
+    const total = activeList.items.length;
     if (total === 0 || listDone < total) return;
     if (askedToClose.current === activeList.id) return;
     askedToClose.current = activeList.id;
@@ -230,7 +230,9 @@ export function ProductsScreen() {
       key: 'list-done',
       action: { label: t('lists.once.close'), onClick: () => closeList(activeList) },
     });
-  }, [activeList, listDone, toast, closeList]);
+    // closeList и toast намеренно не в зависимостях: они пересоздаются каждый
+    // рендер, и эффект гонялся бы вхолостую при каждой перерисовке
+  }, [activeList, listDone]);
 
   /*
    * Заголовки отделов показываем, только если они что-то дают:
@@ -331,11 +333,26 @@ export function ProductsScreen() {
     });
   };
 
+  /** Заявки выбранного списка: «сколько взять», по продукту. */
+  const listQuantities = useMemo(() => {
+    if (!activeList) return null;
+    return new Map(activeList.items.map((i) => [i.productId, i.quantity]));
+  }, [activeList]);
+
   const renderRow = (product: Product) => (
     <ProductRow
       key={product.id}
       product={product}
       need={needByProduct.get(product.id)}
+      /*
+       * Внутри списка число у названия — заявка этой поездки, а не количество
+       * продукта, и потребностей блюд не видно: быстрый закуп идёт без
+       * планирования под блюда (решение Vadym 09-30, 10-01). Ползунок при
+       * этом по-прежнему значит наличие: по списку идут и отмечают купленное,
+       * из этого же считается «Куплено 3 из 5».
+       */
+      listQuantity={listQuantities?.get(product.id)}
+      hideNeeds={activeList !== null}
       showImage={showImages}
       expanded={activeProductId === product.id}
       // Ползунок только отмечает наличие и панель не раскрывает — иначе в магазине
@@ -350,7 +367,15 @@ export function ProductsScreen() {
       }}
       // Тап по строке открывает и закрывает панель у любого продукта
       onExpand={() => setActiveProduct(activeProductId === product.id ? null : product.id)}
-      onQuantityChange={(q) => setQuantity(product.id, q)}
+      onQuantityChange={(q) => {
+        if (activeList && listQuantities?.has(product.id)) {
+          listActions.setQuantity.mutate({
+            listId: activeList.id, productId: product.id, quantity: q,
+          });
+        } else {
+          setQuantity(product.id, q);
+        }
+      }}
       onMenu={() => setMenuFor(product)}
     />
   );
@@ -492,7 +517,7 @@ export function ProductsScreen() {
               полезнее прогресс; свёрнут — название и как вернуться */}
           <span className="min-w-0 flex-1 truncate text-caption">
             {activeList?.id === onceList.id
-              ? t('lists.progress', { done: listDone, total: onceList.productIds.length })
+              ? t('lists.progress', { done: listDone, total: onceList.items.length })
               : onceList.name}
           </span>
           {activeList?.id === onceList.id ? (
@@ -591,7 +616,7 @@ export function ProductsScreen() {
         />
         {activeList && activeList.id !== onceList?.id && (
           <p className="mt-2 px-0.5 text-micro text-text-dim">
-            {t('lists.progress', { done: listDone, total: activeList.productIds.length })}
+            {t('lists.progress', { done: listDone, total: activeList.items.length })}
           </p>
         )}
       </div>
@@ -696,8 +721,8 @@ export function ProductsScreen() {
           }] : []),
           ...lists.map((list) => ({
             label: `${list.name} · ${t('lists.itemsCount', {
-              count: list.productIds.length,
-              noun: plural(list.productIds.length, 'позиция', 'позиции', 'позиций'),
+              count: list.items.length,
+              noun: plural(list.items.length, 'позиция', 'позиции', 'позиций'),
             })}`,
             Icon: list.kind === 'once' ? ShoppingBasket : ListChecks,
             onClick: () => setListFilter(list.id),
