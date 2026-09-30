@@ -201,7 +201,7 @@ export function SetEditor({ kitchenId, open, set = null, initialDishIds, onClose
                   inputMode="decimal"
                   placeholder={t('dishes.create.qty')}
                   aria-label={`${product.name}, количество`}
-                  className="h-9 w-20 rounded-sm border border-line bg-surface-2 px-2 text-right text-body outline-none focus:border-accent"
+                  className="h-9 w-20 rounded-sm border border-line bg-surface-2 px-2 text-right text-field outline-none focus:border-accent"
                 />
                 <UnitSelect
                   kitchenId={kitchenId}

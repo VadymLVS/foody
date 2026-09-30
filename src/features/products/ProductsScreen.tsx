@@ -1,8 +1,8 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  ChevronDown, CloudOff, ListChecks, ListPlus, PackageCheck, PackagePlus, PartyPopper,
-  Pencil, PowerOff, Receipt, SearchX, ShoppingBasket, Sparkles, Trash2, UtensilsCrossed,
+  ChevronDown, CloudOff, Eraser, ListChecks, ListPlus, PackageCheck, PackagePlus,
+  PartyPopper, Pencil, Receipt, SearchX, ShoppingBasket, Sparkles, Trash2, UtensilsCrossed,
 } from 'lucide-react';
 import {
   ActionSheet, BottomNav, Button, EmptyState, FilterPills, ProductRow, SearchField, Tabs,
@@ -142,10 +142,13 @@ export function ProductsScreen() {
 
   useEffect(() => {
     if (!listFilter) return;
-    // scrollIntoView не учитывает зарезервированный отступ справа и оставляет
-    // пилюлю под кнопкой — доводим ряд до конца сами
-    const row = listPillRef.current?.parentElement;
-    row?.scrollTo({ left: row.scrollWidth, behavior: 'smooth' });
+    // Подводим ряд к пилюле только если она действительно не видна целиком:
+    // прежняя безусловная прокрутка до конца уносила «Все» за левый край
+    const pill = listPillRef.current;
+    const row = pill?.parentElement;
+    if (!pill || !row) return;
+    const hidden = pill.offsetLeft + pill.offsetWidth - row.scrollLeft > row.clientWidth;
+    if (hidden) row.scrollTo({ left: row.scrollWidth, behavior: 'smooth' });
   }, [listFilter]);
 
   const closeList = (list: ProductList) => {
@@ -579,7 +582,10 @@ export function ProductsScreen() {
               aria-label={t('products.turnOffAll')}
               className="flex h-11 w-11 items-center justify-center rounded-full text-text-muted active:bg-surface"
             >
-              <PowerOff className="h-[19px] w-[19px]" />
+              {/* Ластик, а не кнопка выключения: действие читается как
+                  «очистить», тот же значок стоит у «Очистить меню»
+                  (замечание Vadym 09-30) */}
+              <Eraser className="h-[19px] w-[19px]" />
             </button>
           )}
         />
@@ -629,6 +635,9 @@ export function ProductsScreen() {
         actions={[
           { label: t('products.addFromList'), Icon: ListChecks, onClick: () => navigate('/products/quick-start') },
           { label: t('products.addOwn'), Icon: PackagePlus, onClick: () => openAdd() },
+          // Создание списка искать логичнее там, где вообще добавляют
+          // (предложение Vadym 09-30). В панели списков пункт тоже остался
+          { label: t('lists.create'), Icon: ListPlus, onClick: () => { setEditorFor(null); setEditorOpen(true); } },
         ]}
       />
 
@@ -665,7 +674,7 @@ export function ProductsScreen() {
         onClose={() => setConfirmTurnOff(false)}
         actions={[{
           label: t('products.turnOffAll'),
-          Icon: PowerOff,
+          Icon: Eraser,
           danger: true,
           onClick: turnOffAll,
         }]}

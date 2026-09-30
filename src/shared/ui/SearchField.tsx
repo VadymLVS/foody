@@ -76,7 +76,7 @@ export function SearchField({
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         inputMode="search"
-        className="h-11 min-w-0 flex-1 bg-transparent text-body text-text-primary outline-none placeholder:text-[#4A4A4A]"
+        className="h-11 min-w-0 flex-1 bg-transparent text-field text-text-primary outline-none placeholder:text-[#4A4A4A]"
       />
       {value ? (
         <button
