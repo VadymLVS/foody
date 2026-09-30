@@ -1,13 +1,17 @@
-import { useEffect, useState } from 'react';
-import { ShoppingBasket, Trash2, X } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { ListChecks, Trash2, X } from 'lucide-react';
 import { Button, Input, Modal, useToast } from '@/shared/ui';
 import { useProducts } from '@/shared/hooks/useProducts';
-import { useProductListActions } from '@/shared/hooks/useProductLists';
-import { t } from '@/shared/lib/i18n';
+import {
+  useActiveOnceList, useProductListActions, useProductLists,
+} from '@/shared/hooks/useProductLists';
+import { t, unitLabel } from '@/shared/lib/i18n';
+import { formatNumber } from '@/shared/lib/text';
 import { cn } from '@/shared/lib/cn';
-import type { ProductList } from '@/shared/api/repo';
+import type { ProductList, ProductListItem } from '@/shared/api/repo';
 import type { Product } from '@/shared/db/types';
 import { ProductPicker } from './ProductPicker';
+import { ListCollect } from './ListCollect';
 
 interface Props {
   kitchenId: string;
@@ -19,72 +23,91 @@ interface Props {
 }
 
 /**
- * Создание и правка списка покупок (backlog п. 45).
+ * Создание и правка списка покупок (backlog п. 45, 46, 47).
  *
- * Два вида в одной форме: постоянная заготовка («Обычная закупка») и разовый
- * «купить сейчас» на одну поездку. Разница только в том, как список ведёт себя
- * дальше: разовый всплывает в приоритете и закрывается после покупок.
+ * Порядок полей — выбор вида, потом всё остальное (замечание Vadym 09-30).
+ * Сначала форма открывалась с названием сверху и ставила в него фокус, вытаскивая
+ * клавиатуру. Но первое решение человека другое: это разовая поездка или
+ * постоянная заготовка. У разового списка названия нет вовсе — он один, живёт
+ * до конца поездки и подписан «Купить сейчас» сам собой; название появляется
+ * только у постоянного. По умолчанию выбран разовый: так чаще.
  *
- * Количества у позиции нет намеренно: количество живёт у продукта (D-030),
- * второе рядом сразу начало бы расходиться с первым.
+ * Фокус ставится на поиск продукта, а не на название: выбор вида делается
+ * пальцем, а вводить сразу хочется позицию.
  *
- * «Взять из «Купить»» — потому что список чаще всего и собирают, стоя над
- * этим фильтром: набрать двадцать позиций поиском по одной никто не будет.
+ * Панель во всю высоту (`tall`): короткая форма прижималась к низу экрана,
+ * и рабочей зоны было почти не видно.
+ *
+ * Состав хранится идентификаторами с заявками, а не объектами продуктов
+ * (правка 09-30, D-092). Сначала он хранился объектами и наполнялся эффектом,
+ * у которого в зависимостях стоял список продуктов кухни. Любое обновление
+ * этого списка — а оно случается на каждом созданном из формы продукте и на
+ * каждой отметке Алины — перезапускало эффект и обнуляло форму. Теперь форма
+ * наполняется ровно один раз на открытие, а имена подставляются при отрисовке.
  */
 export function ListEditor({ kitchenId, open, list, onClose, onSaved }: Props) {
   const { data: products = [] } = useProducts(kitchenId);
-  const { save, remove } = useProductListActions(kitchenId);
+  const { data: lists = [] } = useProductLists(kitchenId);
+  const activeOnce = useActiveOnceList(lists);
+  const { save, remove, close } = useProductListActions(kitchenId);
   const toast = useToast();
 
   const [name, setName] = useState('');
-  const [kind, setKind] = useState<'regular' | 'once'>('regular');
-  const [picked, setPicked] = useState<Product[]>([]);
+  const [kind, setKind] = useState<'regular' | 'once'>('once');
+  const [items, setItems] = useState<ProductListItem[]>([]);
+  /** Созданные прямо из формы: в общем списке продуктов они появятся не сразу. */
+  const [fresh, setFresh] = useState<Product[]>([]);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [collectOpen, setCollectOpen] = useState(false);
+  /** Уже есть открытый разовый список: спрашиваем, закрывать ли его. */
+  const [confirmReplace, setConfirmReplace] = useState(false);
 
-  /*
-   * Название подставляется по виду списка (замечание Vadym 09-30).
-   * Раньше форма открывалась с пустым названием, «Сохранить» из-за этого
-   * был неактивен, и почему — нигде не сказано: человек добавлял позиции
-   * и не мог сохранить. Теперь имя есть сразу, а если его не меняли —
-   * оно следует за переключателем вида.
-   */
-  const defaultName = (k: 'regular' | 'once') =>
-    (k === 'once' ? t('lists.defaultName.once') : t('lists.defaultName.regular'));
-
-  const pickKind = (next: 'regular' | 'once') => {
-    setKind(next);
-    if (!name.trim() || name.trim() === defaultName(kind)) setName(defaultName(next));
-  };
-
-  // Форма наполняется на открытие: при правке — из списка, при создании — пустая
+  // Форма наполняется только на открытие. Список продуктов в зависимостях
+  // стоять не должен — см. пояснение в шапке файла.
   useEffect(() => {
     if (!open) return;
     setConfirmDelete(false);
+    setConfirmReplace(false);
+    setCollectOpen(false);
+    setFresh([]);
     if (list) {
       setName(list.name);
       setKind(list.kind);
-      const byId = new Map(products.map((p) => [p.id, p]));
-      setPicked(list.productIds.flatMap((id) => (byId.has(id) ? [byId.get(id)!] : [])));
+      setItems(list.items.map((i) => ({ ...i })));
     } else {
-      setName(defaultName('regular'));
-      setKind('regular');
-      setPicked([]);
+      setName(t('lists.defaultName.regular'));
+      setKind('once');
+      setItems([]);
     }
-  }, [open, list, products]);
+  }, [open, list?.id]);
 
-  const addFromToBuy = () => {
-    const have = new Set(picked.map((p) => p.id));
-    const toBuy = products.filter((p) => !p.in_stock && !have.has(p.id));
-    if (toBuy.length === 0) {
-      toast.show(t('lists.editor.nothingToBuy'));
-      return;
-    }
-    setPicked((prev) => [...prev, ...toBuy]);
+  /** Имя по идентификатору: из кухни, а для только что созданных — из формы. */
+  const byId = useMemo(() => {
+    const map = new Map(products.map((p) => [p.id, p]));
+    for (const p of fresh) if (!map.has(p.id)) map.set(p.id, p);
+    return map;
+  }, [products, fresh]);
+
+  const pickedIds = useMemo(() => items.map((i) => i.productId), [items]);
+
+  /*
+   * Название разового списка всегда «Купить сейчас» (решение Vadym 09-30),
+   * поэтому поля для него нет и трогать его нельзя. У постоянного название
+   * подставлено сразу: раньше форма открывалась с пустым, «Сохранить» из-за
+   * этого был неактивен, и почему — нигде не сказано.
+   */
+  const finalName = kind === 'once' ? t('lists.defaultName.once') : name.trim();
+
+  const add = (product: Product) => {
+    setFresh((prev) => (prev.some((p) => p.id === product.id) ? prev : [...prev, product]));
+    setItems((prev) => (prev.some((i) => i.productId === product.id)
+      ? prev
+      : [...prev, { productId: product.id, quantity: 0 }]));
   };
 
-  const submit = () => {
+  const commit = () => {
     save.mutate(
-      { input: { name: name.trim(), kind, productIds: picked.map((p) => p.id) }, id: list?.id },
+      { input: { name: finalName, kind, items }, id: list?.id },
       {
         onSuccess: (id) => {
           onSaved(id);
@@ -95,10 +118,32 @@ export function ListEditor({ kitchenId, open, list, onClose, onSaved }: Props) {
     );
   };
 
+  /*
+   * Разовый список только один за раз (решение Vadym 09-30: «Прошлый
+   * закрываем, создаём новый»). Запрет с подсказкой был бы тупиком: человек
+   * уже собрал состав, и ему пришлось бы всё бросить, закрыть прежний список
+   * и набрать заново. Поэтому спрашиваем и закрываем сами.
+   */
+  const submit = () => {
+    const replacing = kind === 'once' && activeOnce !== null && activeOnce.id !== list?.id;
+    if (replacing && !confirmReplace) {
+      setConfirmReplace(true);
+      return;
+    }
+    if (replacing && activeOnce) {
+      close.mutate(activeOnce.id, {
+        onSuccess: commit,
+        onError: (e) => toast.show(e instanceof Error ? e.message : t('common.error'), { tone: 'danger' }),
+      });
+      return;
+    }
+    commit();
+  };
+
   const kindButton = (value: 'regular' | 'once', label: string, hint: string) => (
     <button
       type="button"
-      onClick={() => pickKind(value)}
+      onClick={() => { setKind(value); setConfirmReplace(false); }}
       aria-pressed={kind === value}
       className={cn(
         'flex-1 rounded-sm border px-3 py-2 text-left',
@@ -111,127 +156,162 @@ export function ListEditor({ kitchenId, open, list, onClose, onSaved }: Props) {
   );
 
   return (
-    <Modal
-      open={open}
-      title={list ? t('lists.editor.editTitle') : t('lists.editor.newTitle')}
-      onClose={onClose}
-      footer={
-        <>
-          <Button variant="secondary" fullWidth onClick={onClose}>{t('common.cancel')}</Button>
-          <Button
-            fullWidth
-            disabled={!name.trim() || picked.length === 0}
-            loading={save.isPending}
-            onClick={submit}
-          >
-            {t('common.save')}
-          </Button>
-        </>
-      }
-    >
-      <Input
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        placeholder={t('lists.editor.namePlaceholder')}
-      />
-
-      <div className="flex gap-2">
-        {kindButton('regular', t('lists.kind.regular'), t('lists.kind.regularHint'))}
-        {kindButton('once', t('lists.kind.once'), t('lists.kind.onceHint'))}
-      </div>
-
-      {/* Поиск стоит выше списка позиций: снизу его подсказки закрывали
-          кнопки формы, и не было видно, что нашлось (замечание Vadym 09-30) */}
-      <div>
-        <div className="mb-1 flex items-center justify-between">
-          <span className="text-micro text-text-muted">{t('lists.editor.add')}</span>
-          <button
-            type="button"
-            onClick={addFromToBuy}
-            className="flex h-8 items-center gap-1.5 text-caption text-accent"
-          >
-            <ShoppingBasket className="h-4 w-4" />
-            {t('lists.editor.fromToBuy')}
-          </button>
+    <>
+      <Modal
+        open={open && !collectOpen}
+        title={list ? t('lists.editor.editTitle') : t('lists.editor.newTitle')}
+        onClose={onClose}
+        tall
+        footer={
+          <>
+            <Button variant="secondary" fullWidth onClick={onClose}>{t('common.cancel')}</Button>
+            <Button
+              fullWidth
+              disabled={!finalName || items.length === 0}
+              loading={save.isPending || close.isPending}
+              onClick={submit}
+            >
+              {confirmReplace ? t('lists.replaceOnce.confirm') : t('common.save')}
+            </Button>
+          </>
+        }
+      >
+        {/* Вид списка — первое решение, поэтому он первый */}
+        <div className="flex gap-2">
+          {kindButton('once', t('lists.kind.once'), t('lists.kind.onceHint'))}
+          {kindButton('regular', t('lists.kind.regular'), t('lists.kind.regularHint'))}
         </div>
-        <ProductPicker
-          kitchenId={kitchenId}
-          pickedIds={picked.map((p) => p.id)}
-          placeholder={t('lists.editor.search')}
-          onPick={(product) => setPicked((prev) => (prev.some((p) => p.id === product.id) ? prev : [...prev, product]))}
-          onError={(message) => toast.show(message, { tone: 'danger' })}
-        />
-      </div>
 
-      <div>
-        <span className="mb-1 block text-micro text-text-muted">
-          {t('lists.editor.items', { count: picked.length })}
-        </span>
-
-        {picked.length === 0 && (
-          <p className="mb-2 text-caption text-text-dim">{t('lists.editor.empty')}</p>
+        {kind === 'regular' && (
+          <div>
+            <span className="mb-1.5 block text-micro text-text-muted">{t('lists.editor.name')}</span>
+            <Input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder={t('lists.editor.namePlaceholder')}
+            />
+          </div>
         )}
 
-        {picked.map((product) => (
-          <div key={product.id} className="flex h-11 items-center gap-2 border-b border-line">
-            <span className="min-w-0 flex-1 truncate text-body">{product.name}</span>
+        {/* Поиск стоит выше списка позиций: снизу его подсказки закрывали
+            кнопки формы, и не было видно, что нашлось (замечание Vadym 09-30) */}
+        <div>
+          <div className="mb-1 flex items-center justify-between">
+            <span className="text-micro text-text-muted">{t('lists.editor.add')}</span>
             <button
               type="button"
-              onClick={() => setPicked((prev) => prev.filter((p) => p.id !== product.id))}
-              aria-label={t('lists.editor.removeItem', { name: product.name })}
-              className="flex h-11 w-11 shrink-0 items-center justify-center text-text-muted"
+              onClick={() => setCollectOpen(true)}
+              className="flex h-8 items-center gap-1.5 text-caption text-accent"
             >
-              <X className="h-4 w-4" />
+              <ListChecks className="h-4 w-4" />
+              {t('lists.editor.openProducts')}
             </button>
           </div>
-        ))}
-      </div>
+          <ProductPicker
+            kitchenId={kitchenId}
+            pickedIds={pickedIds}
+            placeholder={t('lists.editor.search')}
+            onPick={add}
+            onError={(message) => toast.show(message, { tone: 'danger' })}
+            autoFocus
+          />
+        </div>
 
-      {/* Неактивная кнопка без объяснения — тупик: говорим, чего не хватает,
-          и говорим рядом с кнопками, куда человек смотрит последним */}
-      {(!name.trim() || picked.length === 0) && (
-        <p className="text-caption text-text-dim">
-          {!name.trim() ? t('lists.editor.needName') : t('lists.editor.needItems')}
-        </p>
-      )}
+        <div>
+          <span className="mb-1 block text-micro text-text-muted">
+            {t('lists.editor.items', { count: items.length })}
+          </span>
 
-      {list && (
-        confirmDelete ? (
-          <div className="rounded-sm bg-surface-2 p-3">
-            <p className="mb-3 text-caption text-text-primary">
-              {t('lists.deleteConfirm', { name: list.name })}
-            </p>
-            <div className="flex gap-2">
-              <Button variant="secondary" fullWidth onClick={() => setConfirmDelete(false)}>
-                {t('common.cancel')}
-              </Button>
-              <Button
-                variant="danger"
-                fullWidth
-                loading={remove.isPending}
-                onClick={() => remove.mutate(list.id, {
-                  onSuccess: () => {
-                    toast.show(t('lists.deleted', { name: list.name }));
-                    onSaved('');
-                    onClose();
-                  },
-                })}
-              >
-                {t('common.delete')}
-              </Button>
+          {items.length === 0 && (
+            <p className="mb-2 text-caption text-text-dim">{t('lists.editor.empty')}</p>
+          )}
+
+          {items.map((item) => {
+            const product = byId.get(item.productId);
+            return (
+              <div key={item.productId} className="flex h-11 items-center gap-2 border-b border-line">
+                <span className="min-w-0 flex-1 truncate text-body">
+                  {product?.name ?? '…'}
+                  {/* Заявка показывается лаймом — как у потребностей блюд (просьба Vadym) */}
+                  {item.quantity > 0 && product && (
+                    <span className="ml-1.5 text-micro text-accent">
+                      {formatNumber(item.quantity)} {unitLabel(product.unit)}
+                    </span>
+                  )}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setItems((prev) => prev.filter((i) => i.productId !== item.productId))}
+                  aria-label={t('lists.editor.removeItem', { name: product?.name ?? '' })}
+                  className="flex h-11 w-11 shrink-0 items-center justify-center text-text-muted"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Неактивная кнопка без объяснения — тупик: говорим, чего не хватает,
+            и говорим рядом с кнопками, куда человек смотрит последним */}
+        {(!finalName || items.length === 0) && (
+          <p className="text-caption text-text-dim">
+            {!finalName ? t('lists.editor.needName') : t('lists.editor.needItems')}
+          </p>
+        )}
+
+        {confirmReplace && activeOnce && (
+          <p className="rounded-sm bg-surface-2 p-3 text-caption text-text-primary">
+            {t('lists.replaceOnce.question', { name: activeOnce.name })}
+          </p>
+        )}
+
+        {list && (
+          confirmDelete ? (
+            <div className="rounded-sm bg-surface-2 p-3">
+              <p className="mb-3 text-caption text-text-primary">
+                {t('lists.deleteConfirm', { name: list.name })}
+              </p>
+              <div className="flex gap-2">
+                <Button variant="secondary" fullWidth onClick={() => setConfirmDelete(false)}>
+                  {t('common.cancel')}
+                </Button>
+                <Button
+                  variant="danger"
+                  fullWidth
+                  loading={remove.isPending}
+                  onClick={() => remove.mutate(list.id, {
+                    onSuccess: () => {
+                      toast.show(t('lists.deleted', { name: list.name }));
+                      onSaved('');
+                      onClose();
+                    },
+                  })}
+                >
+                  {t('common.delete')}
+                </Button>
+              </div>
             </div>
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setConfirmDelete(true)}
-            className="flex h-11 w-full items-center justify-center gap-2 text-body text-danger"
-          >
-            <Trash2 className="h-4 w-4" />
-            {t('lists.delete')}
-          </button>
-        )
-      )}
-    </Modal>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setConfirmDelete(true)}
+              className="flex h-11 w-full items-center justify-center gap-2 text-body text-danger"
+            >
+              <Trash2 className="h-4 w-4" />
+              {t('lists.delete')}
+            </button>
+          )
+        )}
+      </Modal>
+
+      <ListCollect
+        kitchenId={kitchenId}
+        open={open && collectOpen}
+        items={items}
+        onChange={setItems}
+        onClose={() => setCollectOpen(false)}
+      />
+    </>
   );
 }

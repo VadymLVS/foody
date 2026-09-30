@@ -1,6 +1,6 @@
 import type { Category, DeckCard, DishIngredient, PlanNeedRow, Product, Unit } from '@/shared/db/types';
 import type {
-  DishSet, DishWithStatus, NewDish, NewProduct, ProductList, ProductListInput,
+  DishSet, DishWithStatus, NewDish, NewProduct, ProductList, ProductListInput, ProductListItem,
   ProductPatch, Repo, RealtimeEvent,
 } from './repo';
 import { productLabel } from '@/shared/lib/i18n';
@@ -118,7 +118,7 @@ interface State {
   /** Списки покупок (п. 45). Закрытые остаются здесь же с датой. */
   lists: Array<{
     id: string; name: string; kind: 'regular' | 'once';
-    productIds: string[]; closedAt: string | null; at: string;
+    items: ProductListItem[]; closedAt: string | null; at: string;
   }>;
 }
 
@@ -144,6 +144,14 @@ state.plannedFrom ??= {};
 state.diet ??= { diet: 'omnivore', excludes: [] };
 state.dishEdits ??= {};
 state.lists ??= [];
+// v0.17 держал состав списка массивом идентификаторов. В v0.18 у позиции
+// появилась заявка (п. 46), и старое состояние в localStorage уронило бы
+// демо на `l.items.map`. Переносим молча.
+state.lists = state.lists.map((l) => {
+  const legacy = (l as unknown as { productIds?: string[] }).productIds;
+  if (l.items) return l;
+  return { ...l, items: (legacy ?? []).map((productId) => ({ productId, quantity: 0 })) };
+});
 
 function persist() {
   try { localStorage.setItem(KEY, JSON.stringify(state)); } catch { /* ignore */ }
@@ -235,9 +243,11 @@ export const demoRepo: Repo = {
 
   async createProduct(kitchenId, input: NewProduct) {
     await delay();
-    if (state.products.some((p) => !p.deleted_at && p.name.toLowerCase() === input.name.toLowerCase())) {
-      throw new Error('duplicate_product');
-    }
+    // Продукт с таким названием уже есть — отдаём его, а не ошибку:
+    // вызывающий хотел получить продукт, а не непременно создать новый
+    const same = state.products.find((p) => !p.deleted_at
+      && p.name.trim().toLowerCase() === input.name.trim().toLowerCase());
+    if (same) return same;
     const product: Product = {
       id: `p-${Date.now()}`, kitchen_id: kitchenId, name: input.name,
       category_id: input.categoryId, unit: input.unit, quantity: 0,
@@ -300,7 +310,8 @@ export const demoRepo: Repo = {
   async listProductLists() {
     await delay();
     return state.lists.filter((l) => l.closedAt === null).map<ProductList>((l) => ({
-      id: l.id, name: l.name, kind: l.kind, productIds: [...l.productIds],
+      id: l.id, name: l.name, kind: l.kind,
+      items: l.items.map((i) => ({ ...i })),
       createdBy: DEMO_USER, createdAt: l.at,
     }));
   },
@@ -309,7 +320,7 @@ export const demoRepo: Repo = {
     await delay();
     if (id) {
       state.lists = state.lists.map((l) => (l.id === id
-        ? { ...l, name: input.name.trim(), kind: input.kind, productIds: [...input.productIds] }
+        ? { ...l, name: input.name.trim(), kind: input.kind, items: input.items.map((i) => ({ ...i })) }
         : l));
       persist();
       return id;
@@ -317,11 +328,24 @@ export const demoRepo: Repo = {
     const listId = `list-${Date.now()}`;
     state.lists = [...state.lists, {
       id: listId, name: input.name.trim(), kind: input.kind,
-      productIds: [...input.productIds], closedAt: null, at: new Date().toISOString(),
+      items: input.items.map((i) => ({ ...i })),
+      closedAt: null, at: new Date().toISOString(),
     }];
     persist();
     listListeners.forEach((f) => f());
     return listId;
+  },
+
+  async setListItemQuantity(listId, productId, quantity) {
+    await delay();
+    state.lists = state.lists.map((l) => (l.id === listId
+      ? {
+          ...l,
+          items: l.items.map((i) => (i.productId === productId ? { ...i, quantity } : i)),
+        }
+      : l));
+    persist();
+    listListeners.forEach((f) => f());
   },
 
   async deleteProductList(id) {

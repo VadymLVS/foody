@@ -6,9 +6,9 @@ import type { ProductList, ProductListInput } from '@/shared/api/repo';
 /**
  * Списки покупок (backlog п. 45).
  *
- * Список — это фильтр: выбор списка ничего не меняет в продуктах, он сужает
- * выдачу. Поэтому здесь нет ни «применить», ни отката — только чтение,
- * правка состава и закрытие разового списка после поездки.
+ * Выбор списка ничего не меняет в продуктах — он сужает выдачу. Поэтому здесь
+ * нет ни «применить», ни отката: чтение, правка состава, заявка у позиции
+ * и закрытие разового списка после поездки.
  */
 export function useProductLists(kitchenId: string) {
   return useQuery({
@@ -60,5 +60,31 @@ export function useProductListActions(kitchenId: string) {
     onSuccess: invalidate,
   });
 
-  return { save, remove, close };
+  /*
+   * Заявка у позиции уже сохранённого списка (п. 46): её правят прямо
+   * в магазине, не открывая форму. Оптимистично, как отметка наличия:
+   * дожидаться ответа на каждое нажатие «+» — значит видеть, как число
+   * догоняет палец.
+   */
+  const setQuantity = useMutation({
+    mutationFn: ({ listId, productId, quantity }:
+      { listId: string; productId: string; quantity: number }) =>
+      repo.setListItemQuantity(listId, productId, quantity),
+    onMutate: ({ listId, productId, quantity }) => {
+      const key = qk.lists(kitchenId);
+      const previous = queryClient.getQueryData<ProductList[]>(key);
+      queryClient.setQueryData<ProductList[]>(key, (lists) => (lists ?? []).map((l) => (
+        l.id === listId
+          ? { ...l, items: l.items.map((i) => (i.productId === productId ? { ...i, quantity } : i)) }
+          : l
+      )));
+      return { previous };
+    },
+    onError: (_e, _v, context) => {
+      if (context?.previous) queryClient.setQueryData(qk.lists(kitchenId), context.previous);
+    },
+    onSuccess: invalidate,
+  });
+
+  return { save, remove, close, setQuantity };
 }
