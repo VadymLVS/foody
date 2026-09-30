@@ -174,7 +174,7 @@ export function AddProductModal({
         <select
           value={categoryId ?? ''}
           onChange={(e) => setCategoryId(e.target.value || null)}
-          className="h-12 w-full rounded-sm border border-line bg-surface-2 px-3 text-body text-text-primary"
+          className="h-12 w-full rounded-sm border border-line bg-surface-2 px-3 text-field text-text-primary"
         >
           <option value="">Без категории</option>
           {productCategories.map((c) => (
@@ -189,7 +189,7 @@ export function AddProductModal({
         <select
           value={unit}
           onChange={(e) => { setUnit(e.target.value as Unit); setUnitWarning(null); }}
-          className="h-12 w-full rounded-sm border border-line bg-surface-2 px-3 text-body text-text-primary"
+          className="h-12 w-full rounded-sm border border-line bg-surface-2 px-3 text-field text-text-primary"
         >
           {UNITS.map((u) => <option key={u} value={u}>{unitLabel(u)}</option>)}
         </select>

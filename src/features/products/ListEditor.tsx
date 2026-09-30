@@ -41,6 +41,21 @@ export function ListEditor({ kitchenId, open, list, onClose, onSaved }: Props) {
   const [picked, setPicked] = useState<Product[]>([]);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
+  /*
+   * Название подставляется по виду списка (замечание Vadym 09-30).
+   * Раньше форма открывалась с пустым названием, «Сохранить» из-за этого
+   * был неактивен, и почему — нигде не сказано: человек добавлял позиции
+   * и не мог сохранить. Теперь имя есть сразу, а если его не меняли —
+   * оно следует за переключателем вида.
+   */
+  const defaultName = (k: 'regular' | 'once') =>
+    (k === 'once' ? t('lists.defaultName.once') : t('lists.defaultName.regular'));
+
+  const pickKind = (next: 'regular' | 'once') => {
+    setKind(next);
+    if (!name.trim() || name.trim() === defaultName(kind)) setName(defaultName(next));
+  };
+
   // Форма наполняется на открытие: при правке — из списка, при создании — пустая
   useEffect(() => {
     if (!open) return;
@@ -51,7 +66,7 @@ export function ListEditor({ kitchenId, open, list, onClose, onSaved }: Props) {
       const byId = new Map(products.map((p) => [p.id, p]));
       setPicked(list.productIds.flatMap((id) => (byId.has(id) ? [byId.get(id)!] : [])));
     } else {
-      setName('');
+      setName(defaultName('regular'));
       setKind('regular');
       setPicked([]);
     }
@@ -83,7 +98,7 @@ export function ListEditor({ kitchenId, open, list, onClose, onSaved }: Props) {
   const kindButton = (value: 'regular' | 'once', label: string, hint: string) => (
     <button
       type="button"
-      onClick={() => setKind(value)}
+      onClick={() => pickKind(value)}
       aria-pressed={kind === value}
       className={cn(
         'flex-1 rounded-sm border px-3 py-2 text-left',
@@ -125,11 +140,11 @@ export function ListEditor({ kitchenId, open, list, onClose, onSaved }: Props) {
         {kindButton('once', t('lists.kind.once'), t('lists.kind.onceHint'))}
       </div>
 
+      {/* Поиск стоит выше списка позиций: снизу его подсказки закрывали
+          кнопки формы, и не было видно, что нашлось (замечание Vadym 09-30) */}
       <div>
         <div className="mb-1 flex items-center justify-between">
-          <span className="text-micro text-text-muted">
-            {t('lists.editor.items', { count: picked.length })}
-          </span>
+          <span className="text-micro text-text-muted">{t('lists.editor.add')}</span>
           <button
             type="button"
             onClick={addFromToBuy}
@@ -139,6 +154,19 @@ export function ListEditor({ kitchenId, open, list, onClose, onSaved }: Props) {
             {t('lists.editor.fromToBuy')}
           </button>
         </div>
+        <ProductPicker
+          kitchenId={kitchenId}
+          pickedIds={picked.map((p) => p.id)}
+          placeholder={t('lists.editor.search')}
+          onPick={(product) => setPicked((prev) => (prev.some((p) => p.id === product.id) ? prev : [...prev, product]))}
+          onError={(message) => toast.show(message, { tone: 'danger' })}
+        />
+      </div>
+
+      <div>
+        <span className="mb-1 block text-micro text-text-muted">
+          {t('lists.editor.items', { count: picked.length })}
+        </span>
 
         {picked.length === 0 && (
           <p className="mb-2 text-caption text-text-dim">{t('lists.editor.empty')}</p>
@@ -159,13 +187,13 @@ export function ListEditor({ kitchenId, open, list, onClose, onSaved }: Props) {
         ))}
       </div>
 
-      <ProductPicker
-        kitchenId={kitchenId}
-        pickedIds={picked.map((p) => p.id)}
-        placeholder={t('lists.editor.search')}
-        onPick={(product) => setPicked((prev) => (prev.some((p) => p.id === product.id) ? prev : [...prev, product]))}
-        onError={(message) => toast.show(message, { tone: 'danger' })}
-      />
+      {/* Неактивная кнопка без объяснения — тупик: говорим, чего не хватает,
+          и говорим рядом с кнопками, куда человек смотрит последним */}
+      {(!name.trim() || picked.length === 0) && (
+        <p className="text-caption text-text-dim">
+          {!name.trim() ? t('lists.editor.needName') : t('lists.editor.needItems')}
+        </p>
+      )}
 
       {list && (
         confirmDelete ? (

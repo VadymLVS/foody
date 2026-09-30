@@ -133,7 +133,7 @@ export function CreateDishModal({ kitchenId, open, initialName = '', onCreated, 
         <select
           value={categoryId ?? ''}
           onChange={(e) => setCategoryId(e.target.value || null)}
-          className="h-12 w-full rounded-sm border border-line bg-surface-2 px-3 text-body text-text-primary"
+          className="h-12 w-full rounded-sm border border-line bg-surface-2 px-3 text-field text-text-primary"
         >
           <option value="">{t('dishes.create.noCategory')}</option>
           {dishCategories.map((c) => (
@@ -161,7 +161,7 @@ export function CreateDishModal({ kitchenId, open, initialName = '', onCreated, 
                 inputMode="decimal"
                 placeholder={t('dishes.create.qty')}
                 aria-label={`${product.name}, количество`}
-                className="h-9 w-20 rounded-sm border border-line bg-surface-2 px-2 text-right text-body outline-none focus:border-accent"
+                className="h-9 w-20 rounded-sm border border-line bg-surface-2 px-2 text-right text-field outline-none focus:border-accent"
               />
               <UnitSelect
                 kitchenId={kitchenId}
@@ -205,7 +205,7 @@ export function CreateDishModal({ kitchenId, open, initialName = '', onCreated, 
           placeholder={t('dishes.recipe.placeholder')}
           rows={6}
           maxLength={5000}
-          className="w-full rounded-sm border border-line bg-surface-2 px-3 py-2.5 text-body text-text-primary outline-none placeholder:text-[#4A4A4A] focus:border-accent"
+          className="w-full rounded-sm border border-line bg-surface-2 px-3 py-2.5 text-field text-text-primary outline-none placeholder:text-[#4A4A4A] focus:border-accent"
         />
       </label>
 

@@ -44,10 +44,16 @@ export function Tabs({
  * Фильтры состояния — пилюлями, чтобы не сливаться со вкладками выше.
  *
  * `after` — то, что едет вместе с пилюлями (выбор списка покупок, п. 45).
- * `pinned` — то, что закреплено у правого края поверх ряда и не уезжает
- * при прокрутке: «Выключить всё» должно быть на виду над списком, который
- * оно меняет (п. 44, выбор Vadym). Под закреплённым — затухание, как
- * справа у вкладок категорий, иначе пилюли уезжают под кнопку резко.
+ * `pinned` — кнопка у правого края, которая не уезжает при прокрутке:
+ * «Выключить всё» должно быть на виду над списком, который оно меняет
+ * (п. 44, выбор Vadym).
+ *
+ * Закреплённое стоит рядом с полосой прокрутки, а не поверх неё. Сначала
+ * я положил кнопку сверху и зарезервировал под неё 72 px отступом внутри
+ * самой полосы — из-за этого ряд «прокручивался» ровно на ширину отступа,
+ * то есть на телефоне палец тянул его почти вхолостую, а первая пилюля
+ * уезжала за край (замечание Vadym 09-30). Теперь полоса просто на
+ * 44 px короче, и внутри неё прокручивается только настоящее содержимое.
  */
 export function FilterPills({
   items, active, onChange, after, pinned,
@@ -59,10 +65,8 @@ export function FilterPills({
   pinned?: React.ReactNode;
 }) {
   return (
-    <div className="relative">
-      {/* Отступ справа равен закреплённой зоне вместе с затуханием: без него
-          последняя пилюля не доезжает до конца и остаётся под кнопкой */}
-      <div className={cn('no-scrollbar -my-2 flex gap-2 overflow-x-auto py-2', pinned && 'pr-[72px]')}>
+    <div className="flex items-center gap-1">
+      <div className={cn('no-scrollbar -my-2 flex min-w-0 flex-1 gap-2 overflow-x-auto py-2')}>
       {items.map((item) => (
         <button
           key={item.id}
@@ -82,12 +86,7 @@ export function FilterPills({
       ))}
       {after}
       </div>
-      {pinned && (
-        <>
-          <span className="pointer-events-none absolute inset-y-0 right-12 w-6 bg-gradient-to-r from-transparent to-bg" />
-          <span className="absolute inset-y-0 right-0 flex items-center bg-bg pl-1">{pinned}</span>
-        </>
-      )}
+      {pinned && <span className="shrink-0">{pinned}</span>}
     </div>
   );
 }
