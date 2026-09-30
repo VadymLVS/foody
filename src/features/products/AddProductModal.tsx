@@ -6,10 +6,10 @@ import {
 } from '@/shared/hooks/useProducts';
 import { norm } from '@/shared/lib/text';
 import { useTapSelect } from '@/shared/lib/tapSelect';
+import { UNITS } from './ProductPicker';
 import { categoryLabel, unitLabel, t } from '@/shared/lib/i18n';
 import type { Product, Unit } from '@/shared/db/types';
 
-const UNITS: Unit[] = ['pcs', 'kg', 'g', 'l', 'ml', 'pack'];
 
 interface Props {
   kitchenId: string;

@@ -1,18 +1,34 @@
+import { lazy, Suspense } from 'react';
 import { createBrowserRouter, Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useSession } from '@/shared/hooks/useSession';
 import { ProductsScreen } from '@/features/products/ProductsScreen';
-import { QuickStartScreen } from '@/features/products/QuickStartScreen';
-import { DishesScreen } from '@/features/dishes/DishesScreen';
-import { DishQuickStartScreen } from '@/features/dishes/DishQuickStartScreen';
-import { SwipeScreen } from '@/features/swipe/SwipeScreen';
-import { SettingsScreen } from '@/features/settings/SettingsScreen';
-import { DeleteAccountScreen } from '@/features/settings/DeleteAccountScreen';
-import { KitchenManageScreen } from '@/features/kitchens/KitchenManageScreen';
 import { AuthScreen } from '@/features/auth/AuthScreen';
-import { JoinScreen } from '@/features/auth/JoinScreen';
 import { FirstRunGate } from '@/features/onboarding/FirstRunGate';
-import { DietScreen } from '@/features/onboarding/DietScreen';
 import { pendingInvite } from '@/features/onboarding/pendingInvite';
+import { t } from '@/shared/lib/i18n';
+
+/*
+ * Список продуктов и вход нужны сразу — они в основном файле. Остальные
+ * экраны грузятся по переходу: до этого вся программа, включая справочник
+ * блюд, карусель и разбор чека, лежала в одном файле на 680 КБ, и телефон
+ * скачивал её целиком до первого экрана (обзор 09-26, пакет 3).
+ */
+const DishesScreen = lazy(() => import('@/features/dishes/DishesScreen').then((m) => ({ default: m.DishesScreen })));
+const SettingsScreen = lazy(() => import('@/features/settings/SettingsScreen').then((m) => ({ default: m.SettingsScreen })));
+const QuickStartScreen = lazy(() => import('@/features/products/QuickStartScreen').then((m) => ({ default: m.QuickStartScreen })));
+const DishQuickStartScreen = lazy(() => import('@/features/dishes/DishQuickStartScreen').then((m) => ({ default: m.DishQuickStartScreen })));
+const SwipeScreen = lazy(() => import('@/features/swipe/SwipeScreen').then((m) => ({ default: m.SwipeScreen })));
+const DeleteAccountScreen = lazy(() => import('@/features/settings/DeleteAccountScreen').then((m) => ({ default: m.DeleteAccountScreen })));
+const KitchenManageScreen = lazy(() => import('@/features/kitchens/KitchenManageScreen').then((m) => ({ default: m.KitchenManageScreen })));
+const JoinScreen = lazy(() => import('@/features/auth/JoinScreen').then((m) => ({ default: m.JoinScreen })));
+const DietScreen = lazy(() => import('@/features/onboarding/DietScreen').then((m) => ({ default: m.DietScreen })));
+
+/** Пока экран подгружается — строка, а не пустота: переход виден. */
+function Loading() {
+  return <p className="p-12 text-center text-caption text-text-muted">{t('common.loading')}</p>;
+}
+
+const load = (node: React.ReactNode) => <Suspense fallback={<Loading />}>{node}</Suspense>;
 
 /** Пока сессия неизвестна — не решаем: иначе вошедший на миг увидит вход. */
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -43,7 +59,9 @@ function AppShell() {
   return (
     <RequireAuth>
       <div className="min-h-full">
-        <Outlet />
+        <Suspense fallback={<Loading />}>
+          <Outlet />
+        </Suspense>
       </div>
     </RequireAuth>
   );
@@ -52,7 +70,7 @@ function AppShell() {
 export const router = createBrowserRouter([
   { path: '/', element: <GuestOnly><AuthScreen /></GuestOnly> },
   // Приглашение открывается без входа: сначала видно, куда зовут
-  { path: '/join/:code', element: <JoinScreen /> },
+  { path: '/join/:code', element: load(<JoinScreen />) },
   {
     element: <AppShell />,
     children: [
@@ -61,11 +79,11 @@ export const router = createBrowserRouter([
       { path: '/settings', element: <SettingsScreen /> },
     ],
   },
-  { path: '/today/choose', element: <RequireAuth><SwipeScreen /></RequireAuth> },
-  { path: '/products/quick-start', element: <RequireAuth><QuickStartScreen /></RequireAuth> },
-  { path: '/dishes/quick-start', element: <RequireAuth><DishQuickStartScreen /></RequireAuth> },
-  { path: '/settings/diet', element: <RequireAuth><DietScreen mode="settings" /></RequireAuth> },
-  { path: '/settings/delete-account', element: <RequireAuth><DeleteAccountScreen /></RequireAuth> },
-  { path: '/kitchens/:id', element: <RequireAuth><KitchenManageScreen /></RequireAuth> },
+  { path: '/today/choose', element: <RequireAuth>{load(<SwipeScreen />)}</RequireAuth> },
+  { path: '/products/quick-start', element: <RequireAuth>{load(<QuickStartScreen />)}</RequireAuth> },
+  { path: '/dishes/quick-start', element: <RequireAuth>{load(<DishQuickStartScreen />)}</RequireAuth> },
+  { path: '/settings/diet', element: <RequireAuth>{load(<DietScreen mode="settings" />)}</RequireAuth> },
+  { path: '/settings/delete-account', element: <RequireAuth>{load(<DeleteAccountScreen />)}</RequireAuth> },
+  { path: '/kitchens/:id', element: <RequireAuth>{load(<KitchenManageScreen />)}</RequireAuth> },
   { path: '*', element: <Navigate to="/products" replace /> },
 ]);

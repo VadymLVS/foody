@@ -40,12 +40,29 @@ export function Tabs({
   );
 }
 
-/** Фильтры состояния — пилюлями, чтобы не сливаться со вкладками выше. */
+/**
+ * Фильтры состояния — пилюлями, чтобы не сливаться со вкладками выше.
+ *
+ * `after` — то, что едет вместе с пилюлями (выбор списка покупок, п. 45).
+ * `pinned` — то, что закреплено у правого края поверх ряда и не уезжает
+ * при прокрутке: «Выключить всё» должно быть на виду над списком, который
+ * оно меняет (п. 44, выбор Vadym). Под закреплённым — затухание, как
+ * справа у вкладок категорий, иначе пилюли уезжают под кнопку резко.
+ */
 export function FilterPills({
-  items, active, onChange,
-}: { items: TabItem[]; active: string; onChange: (id: string) => void }) {
+  items, active, onChange, after, pinned,
+}: {
+  items: TabItem[];
+  active: string;
+  onChange: (id: string) => void;
+  after?: React.ReactNode;
+  pinned?: React.ReactNode;
+}) {
   return (
-    <div className="no-scrollbar -my-2 flex gap-2 overflow-x-auto py-2">
+    <div className="relative">
+      {/* Отступ справа равен закреплённой зоне вместе с затуханием: без него
+          последняя пилюля не доезжает до конца и остаётся под кнопкой */}
+      <div className={cn('no-scrollbar -my-2 flex gap-2 overflow-x-auto py-2', pinned && 'pr-[72px]')}>
       {items.map((item) => (
         <button
           key={item.id}
@@ -63,6 +80,14 @@ export function FilterPills({
           {item.label}
         </button>
       ))}
+      {after}
+      </div>
+      {pinned && (
+        <>
+          <span className="pointer-events-none absolute inset-y-0 right-12 w-6 bg-gradient-to-r from-transparent to-bg" />
+          <span className="absolute inset-y-0 right-0 flex items-center bg-bg pl-1">{pinned}</span>
+        </>
+      )}
     </div>
   );
 }

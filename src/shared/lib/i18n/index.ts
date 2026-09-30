@@ -7,28 +7,16 @@
  */
 import { ru } from './ru';
 
-export type Lang = 'ru' | 'uk' | 'en' | 'es';
 export type UnitCode = keyof typeof ru.units;
 
-const dictionaries: Record<Lang, typeof ru> = {
-  ru,
-  uk: ru, // TODO: перевод
-  en: ru,
-  es: ru,
-};
-
-let current: Lang = 'ru';
-
-export function setLanguage(lang: Lang) {
-  current = lang;
-}
-
-export function detectLanguage(): Lang {
-  const code = navigator.language.slice(0, 2);
-  return (['ru', 'uk', 'en', 'es'] as const).includes(code as Lang) ? (code as Lang) : 'ru';
-}
-
-const dict = () => dictionaries[current];
+/*
+ * Словарь пока один. Переключателя языков нет, и заготовка под него
+ * (`setLanguage`, `detectLanguage`, карта словарей) убрана в пакете 3:
+ * она не использовалась ни в одном месте. Смысл правила прежний —
+ * строки не хардкодятся, добавить язык значит положить рядом словарь
+ * и вернуть выбор (Q-4).
+ */
+const dict = () => ru;
 
 /** Подстановка вида t('products.create', { name: 'Огурцы' }). */
 export function t(key: keyof typeof ru.ui, vars?: Record<string, string | number>): string {

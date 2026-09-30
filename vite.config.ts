@@ -62,5 +62,22 @@ export default defineConfig({
   define: {
     __BUILD_VERSION__: JSON.stringify(`${version} · ${new Date().toISOString().slice(0, 10)}`),
   },
-  build: { target: 'es2022', sourcemap: false },
+  build: {
+    target: 'es2022',
+    sourcemap: false,
+    rollupOptions: {
+      output: {
+        /*
+         * Библиотеки — отдельными файлами: они меняются редко, и после
+         * обновления приложения телефон дотягивает только свой код,
+         * а React и клиент базы берёт из кэша (пакет 3).
+         */
+        manualChunks: {
+          react: ['react', 'react-dom', 'react-router-dom'],
+          supabase: ['@supabase/supabase-js'],
+          query: ['@tanstack/react-query'],
+        },
+      },
+    },
+  },
 });

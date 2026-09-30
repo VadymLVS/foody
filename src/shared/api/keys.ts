@@ -11,6 +11,7 @@ export const qk = {
   planned:    (k: string) => ['planned', k] as const,
   planNeeds:  (k: string) => ['plan-needs', k] as const,
   sets:       (k: string) => ['sets', k] as const,
+  lists:      (k: string) => ['lists', k] as const,
   diet:       ['diet'] as const,
   suggestions:['suggestions'] as const,
 };

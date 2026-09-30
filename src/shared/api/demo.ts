@@ -1,5 +1,8 @@
 import type { Category, DeckCard, DishIngredient, PlanNeedRow, Product, Unit } from '@/shared/db/types';
-import type { DishSet, DishWithStatus, NewDish, NewProduct, ProductPatch, Repo, RealtimeEvent } from './repo';
+import type {
+  DishSet, DishWithStatus, NewDish, NewProduct, ProductList, ProductListInput,
+  ProductPatch, Repo, RealtimeEvent,
+} from './repo';
 import { productLabel } from '@/shared/lib/i18n';
 import type { DietProfile } from '@/shared/lib/diet';
 
@@ -112,6 +115,11 @@ interface State {
   diet: DietProfile;
   /** Правки встроенных демо-блюд: состав, название, рецепт. */
   dishEdits: Record<string, Partial<DemoDish>>;
+  /** Списки покупок (п. 45). Закрытые остаются здесь же с датой. */
+  lists: Array<{
+    id: string; name: string; kind: 'regular' | 'once';
+    productIds: string[]; closedAt: string | null; at: string;
+  }>;
 }
 
 function load(): State {
@@ -122,7 +130,7 @@ function load(): State {
   return {
     products: seedProducts(), favorites: ['d-3'], planned: ['d-5'], deletedDishes: [], customDishes: [],
     sets: [], plannedSets: [], plannedFrom: {},
-    diet: { diet: 'omnivore', excludes: [] }, dishEdits: {},
+    diet: { diet: 'omnivore', excludes: [] }, dishEdits: {}, lists: [],
   };
 }
 
@@ -135,12 +143,14 @@ state.plannedFrom ??= {};
 // Демо — готовый пользователь: экран питания в нём не мешает сценариям
 state.diet ??= { diet: 'omnivore', excludes: [] };
 state.dishEdits ??= {};
+state.lists ??= [];
 
 function persist() {
   try { localStorage.setItem(KEY, JSON.stringify(state)); } catch { /* ignore */ }
 }
 
 const listeners = new Set<(e: RealtimeEvent) => void>();
+const listListeners = new Set<() => void>();
 const emit = (productId: string) => listeners.forEach((f) => f({ productId, updatedBy: DEMO_USER }));
 const delay = () => new Promise((r) => setTimeout(r, 100));
 
@@ -285,6 +295,53 @@ export const demoRepo: Repo = {
       set.has(p.id) ? { ...p, ...patch, updated_at: new Date().toISOString() } : p);
     persist();
     ids.forEach(emit);
+  },
+
+  async listProductLists() {
+    await delay();
+    return state.lists.filter((l) => l.closedAt === null).map<ProductList>((l) => ({
+      id: l.id, name: l.name, kind: l.kind, productIds: [...l.productIds],
+      createdBy: DEMO_USER, createdAt: l.at,
+    }));
+  },
+
+  async saveProductList(_kitchenId, input: ProductListInput, id) {
+    await delay();
+    if (id) {
+      state.lists = state.lists.map((l) => (l.id === id
+        ? { ...l, name: input.name.trim(), kind: input.kind, productIds: [...input.productIds] }
+        : l));
+      persist();
+      return id;
+    }
+    const listId = `list-${Date.now()}`;
+    state.lists = [...state.lists, {
+      id: listId, name: input.name.trim(), kind: input.kind,
+      productIds: [...input.productIds], closedAt: null, at: new Date().toISOString(),
+    }];
+    persist();
+    listListeners.forEach((f) => f());
+    return listId;
+  },
+
+  async deleteProductList(id) {
+    await delay();
+    state.lists = state.lists.filter((l) => l.id !== id);
+    persist();
+    listListeners.forEach((f) => f());
+  },
+
+  async closeProductList(id) {
+    await delay();
+    state.lists = state.lists.map((l) => (l.id === id
+      ? { ...l, closedAt: new Date().toISOString() } : l));
+    persist();
+    listListeners.forEach((f) => f());
+  },
+
+  subscribeProductLists(_kitchenId, onChange) {
+    listListeners.add(onChange);
+    return () => { listListeners.delete(onChange); };
   },
 
   async countQuantifiedUsage(productId: string) {

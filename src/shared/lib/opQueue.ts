@@ -13,6 +13,13 @@
 import type { ProductPatch } from '@/shared/api/repo';
 
 export interface QueuedOp {
+  /**
+   * Свой номер у каждой постановки в очередь. Сравнивать по ключу и времени
+   * нельзя: две отметки одного продукта попадают в одну миллисекунду, и
+   * отправка выбрасывала бы из очереди свежую отметку вместе с отправленной
+   * (найдено модульным тестом к R-6).
+   */
+  id: number;
   key: string;          // productId + поле: повторная отметка вытесняет прежнюю
   productId: string;
   patch: ProductPatch;
@@ -26,13 +33,17 @@ type Listener = (pending: number) => void;
 
 let queue: QueuedOp[] = load();
 const listeners = new Set<Listener>();
+let nextId = queue.reduce((max, op) => Math.max(max, op.id ?? 0), 0) + 1;
 
 function load(): QueuedOp[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw) as QueuedOp[];
-    return parsed.filter((op) => Date.now() - op.ts < MAX_AGE_MS);
+    // Очередь из прежних версий номеров не знает — раздаём при загрузке
+    return parsed
+      .filter((op) => Date.now() - op.ts < MAX_AGE_MS)
+      .map((op, i) => ({ ...op, id: op.id ?? i + 1 }));
   } catch {
     return [];   // приватный режим или повреждённые данные
   }
@@ -61,7 +72,10 @@ export function enqueue(productId: string, patch: ProductPatch) {
   const key = `${productId}:${field}`;
   // Последнее значение вытесняет прежнее: отправлять промежуточные состояния
   // одного и того же тоггла незачем.
-  queue = [...queue.filter((op) => op.key !== key), { key, productId, patch, ts: Date.now() }];
+  queue = [
+    ...queue.filter((op) => op.key !== key),
+    { id: nextId++, key, productId, patch, ts: Date.now() },
+  ];
   persist();
 }
 
@@ -81,8 +95,8 @@ export function subscribe(listener: Listener): () => void {
  *
  * 1. Отправка идёт по одной и занимает время. Если в это время человек
  *    отметил тот же продукт ещё раз, прежняя версия сравнивалась по одному
- *    ключу — и новая отметка исчезала вместе с отправленной. Теперь операция
- *    убирается из очереди только если совпал и ключ, и момент постановки.
+ *    ключу — и новая отметка исчезала вместе с отправленной. Теперь из очереди
+ *    уходит ровно та постановка, которую отправили, по своему номеру.
  * 2. Два вызова разом (событие online и таймер пришли вместе) отправляли
  *    одно и то же дважды. Теперь второй вызов просто ждёт своей очереди.
  *
@@ -120,8 +134,8 @@ export async function flush(apply: (op: QueuedOp) => Promise<void>): Promise<Flu
       }
     }
 
-    const finished = new Set(done.map((op) => `${op.key}@${op.ts}`));
-    queue = queue.filter((op) => !finished.has(`${op.key}@${op.ts}`));
+    const finished = new Set(done.map((op) => op.id));
+    queue = queue.filter((op) => !finished.has(op.id));
     persist();
     return { sent, dropped };
   } finally {

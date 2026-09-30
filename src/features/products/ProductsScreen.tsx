@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  CloudOff, ListChecks, MoreHorizontal, PackageCheck, PackagePlus, PartyPopper, Pencil,
-  PowerOff, Receipt, SearchX, Sparkles, Trash2, UtensilsCrossed,
+  ChevronDown, CloudOff, ListChecks, ListPlus, PackageCheck, PackagePlus, PartyPopper,
+  Pencil, PowerOff, Receipt, SearchX, ShoppingBasket, Sparkles, Trash2, UtensilsCrossed,
 } from 'lucide-react';
 import {
   ActionSheet, BottomNav, Button, EmptyState, FilterPills, ProductRow, SearchField, Tabs,
@@ -15,14 +15,21 @@ import {
   useProductsRealtime, useQueueFlusher, useSetQuantity, useToggleProduct,
 } from '@/shared/hooks/useProducts';
 import { usePlanNeeds, usePlanned } from '@/shared/hooks/useDishes';
+import {
+  useActiveOnceList, useProductListActions, useProductLists, useProductListsRealtime,
+} from '@/shared/hooks/useProductLists';
 import { useUI } from '@/shared/store/ui';
 import { capitalize, multiSearch, plural, SEARCH_MIN_LENGTH } from '@/shared/lib/text';
 import { useTapSelect } from '@/shared/lib/tapSelect';
 import { categoryLabel, t } from '@/shared/lib/i18n';
+import { cn } from '@/shared/lib/cn';
 import { groupByCategory } from './grouping';
 import { AddProductModal } from './AddProductModal';
-import { ReceiptImport } from './ReceiptImport';
+import { ListEditor } from './ListEditor';
+// Разбор чека открывают редко — грузим его по нажатию, а не при старте
+const ReceiptImport = lazy(() => import('./ReceiptImport').then((m) => ({ default: m.ReceiptImport })));
 import type { Product } from '@/shared/db/types';
+import type { ProductList } from '@/shared/api/repo';
 
 type Status = 'all' | 'to-buy' | 'plan' | 'in-stock';
 
@@ -77,8 +84,30 @@ export function ProductsScreen() {
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [menuFor, setMenuFor] = useState<Product | null>(null);
   const [editFor, setEditFor] = useState<Product | null>(null);
-  const [screenMenuOpen, setScreenMenuOpen] = useState(false);
   const [confirmTurnOff, setConfirmTurnOff] = useState(false);
+
+  /* ── Списки покупок (п. 45) ─────────────────────────────── */
+  const listFilter = useUI((st) => st.listFilter);
+  const setListFilter = useUI((st) => st.setListFilter);
+  const { data: lists = [] } = useProductLists(kitchenId);
+  useProductListsRealtime(kitchenId);
+  const onceList = useActiveOnceList(lists);
+  const listActions = useProductListActions(kitchenId);
+  const [listSheetOpen, setListSheetOpen] = useState(false);
+  /*
+   * Пилюля выбранного списка стоит в конце ряда и при ширине телефона
+   * оказывается за кадром: подводим ряд к ней, когда список включили.
+   * `inline: 'end'` доводит до правого края, а зарезервированный отступ
+   * в FilterPills не даёт ей уехать под закреплённую кнопку.
+   */
+  const listPillRef = useRef<HTMLButtonElement>(null);
+  const [editorFor, setEditorFor] = useState<ProductList | null>(null);
+  const [editorOpen, setEditorOpen] = useState(false);
+
+  const activeList = useMemo(
+    () => lists.find((l) => l.id === listFilter) ?? null,
+    [lists, listFilter],
+  );
 
   /**
    * Отмеченное в этом заходе остаётся в списке до смены фильтра.
@@ -91,6 +120,42 @@ export function ProductsScreen() {
   useEffect(() => {
     setJustToggled(new Set());
   }, [statusFilter, categoryFilter, search]);
+
+  /*
+   * Разовый список показывается сам, без поиска по интерфейсу: его создают
+   * для того, кто уже едет в магазин (п. 45).
+   *
+   * Отметка о показе живёт в sessionStorage, а не в localStorage: один раз
+   * за запуск приложения. Вышел из списка сам — в этот раз больше не
+   * навязываемся; открыл приложение у полки заново — список снова первым,
+   * пока поездка не закрыта.
+   */
+  const AUTO_SHOWN = 'pantrysync:list:autoshown';
+  useEffect(() => {
+    if (!onceList) return;
+    let shown: string | null = null;
+    try { shown = sessionStorage.getItem(AUTO_SHOWN); } catch { /* приватный режим */ }
+    if (shown === onceList.id) return;
+    try { sessionStorage.setItem(AUTO_SHOWN, onceList.id); } catch { /* ignore */ }
+    setListFilter(onceList.id);
+  }, [onceList, setListFilter]);
+
+  useEffect(() => {
+    if (!listFilter) return;
+    // scrollIntoView не учитывает зарезервированный отступ справа и оставляет
+    // пилюлю под кнопкой — доводим ряд до конца сами
+    const row = listPillRef.current?.parentElement;
+    row?.scrollTo({ left: row.scrollWidth, behavior: 'smooth' });
+  }, [listFilter]);
+
+  const closeList = (list: ProductList) => {
+    listActions.close.mutate(list.id, {
+      onSuccess: () => {
+        setListFilter(null);
+        toast.show(t('lists.once.closed', { name: list.name }));
+      },
+    });
+  };
 
   const searching = search.trim().length >= SEARCH_MIN_LENGTH;
 
@@ -122,12 +187,47 @@ export function ProductsScreen() {
     if (searchResult) return searchResult.matches;
     let list = products;
     if (categoryFilter !== 'all') list = list.filter((p) => p.category_id === categoryFilter);
-    const kept = (p: Product) => justToggled.has(p.id);
-    if (statusFilter === 'plan') list = list.filter((p) => needByProduct.has(p.id) || kept(p));
-    if (statusFilter === 'to-buy') list = list.filter((p) => !p.in_stock || kept(p));
-    if (statusFilter === 'in-stock') list = list.filter((p) => p.in_stock || kept(p));
+    /*
+     * Выбран список покупок — показываем только его позиции, и купленные,
+     * и некупленные: по нему идут по залу и отмечают на ходу. Фильтры
+     * состояния при этом не применяются, иначе отмеченное исчезало бы
+     * из-под пальца (п. 45).
+     */
+    if (activeList) {
+      const inList = new Set(activeList.productIds);
+      list = list.filter((p) => inList.has(p.id));
+    } else {
+      const kept = (p: Product) => justToggled.has(p.id);
+      if (statusFilter === 'plan') list = list.filter((p) => needByProduct.has(p.id) || kept(p));
+      if (statusFilter === 'to-buy') list = list.filter((p) => !p.in_stock || kept(p));
+      if (statusFilter === 'in-stock') list = list.filter((p) => p.in_stock || kept(p));
+    }
     return [...list].sort((a, b) => a.name.localeCompare(b.name, 'ru'));
-  }, [products, categoryFilter, statusFilter, searchResult, needByProduct, justToggled]);
+  }, [products, categoryFilter, statusFilter, searchResult, needByProduct, justToggled, activeList]);
+
+  /** Сколько позиций списка уже куплено — для подписи и вопроса о закрытии. */
+  const listDone = useMemo(() => {
+    if (!activeList) return 0;
+    const byId = new Map(products.map((p) => [p.id, p]));
+    return activeList.productIds.filter((id) => byId.get(id)?.in_stock).length;
+  }, [activeList, products]);
+
+  /*
+   * Всё куплено — предлагаем закрыть поездку. Тостом, а не окном: закрывать
+   * список необязательно, и перегораживать экран вопросом незачем.
+   */
+  const askedToClose = useRef<string | null>(null);
+  useEffect(() => {
+    if (!activeList || activeList.kind !== 'once') return;
+    const total = activeList.productIds.length;
+    if (total === 0 || listDone < total) return;
+    if (askedToClose.current === activeList.id) return;
+    askedToClose.current = activeList.id;
+    toast.show(t('lists.once.allBought'), {
+      key: 'list-done',
+      action: { label: t('lists.once.close'), onClick: () => closeList(activeList) },
+    });
+  }, [activeList, listDone, toast, closeList]);
 
   /*
    * Заголовки отделов показываем, только если они что-то дают:
@@ -136,9 +236,10 @@ export function ProductsScreen() {
    * - только в фильтрах-списках покупок.
    */
   const groups = useMemo(() => {
-    const grouped = !searching && categoryFilter === 'all' && GROUPED.has(statusFilter);
+    const grouped = !searching && categoryFilter === 'all'
+      && (activeList !== null || GROUPED.has(statusFilter));
     return grouped ? groupByCategory(visible, categories) : null;
-  }, [searching, categoryFilter, statusFilter, visible, categories]);
+  }, [searching, categoryFilter, statusFilter, visible, categories, activeList]);
 
   /**
    * п. 41 · Выключенный продукт не держит прежнее количество.
@@ -264,6 +365,21 @@ export function ProductsScreen() {
 
   /** Своё пустое состояние у каждого фильтра (backlog п. 13). */
   const renderEmpty = () => {
+    // Список есть, а показывать нечего: его позиции удалили из кухни (п. 45)
+    if (activeList) {
+      return (
+        <EmptyState
+          icon={<ListChecks className="h-12 w-12" />}
+          title={t('lists.emptyList')}
+          description={t('lists.emptyListHint')}
+          action={
+            <Button onClick={() => { setEditorFor(activeList); setEditorOpen(true); }}>
+              {t('lists.edit', { name: activeList.name })}
+            </Button>
+          }
+        />
+      );
+    }
     if (searchResult) {
       return (
         <EmptyState
@@ -359,16 +475,42 @@ export function ProductsScreen() {
           <Receipt className="h-[22px] w-[22px]" />
         </button>
 
-        {/* Действия над всем списком: «Выключить всё» (п. 42) */}
-        <button
-          type="button"
-          onClick={() => setScreenMenuOpen(true)}
-          aria-label={t('products.actions')}
-          className="-mr-1 flex h-11 w-11 items-center justify-center rounded-full text-text-muted active:bg-surface"
-        >
-          <MoreHorizontal className="h-[22px] w-[22px]" />
-        </button>
       </header>
+
+      {/* Разовый список — яркой полосой: её видно с любого экрана продуктов,
+          и по ней можно вернуться к списку или закрыть поездку (п. 45) */}
+      {onceList && (
+        <div
+          className="mb-3 flex items-center gap-2 rounded-md bg-accent px-3 py-2 text-accent-ink"
+          aria-label={t('lists.once.aria', { name: onceList.name })}
+        >
+          <ShoppingBasket className="h-4 w-4 shrink-0" />
+          {/* Список открыт — его название уже стоит в пилюле, и в полосе
+              полезнее прогресс; свёрнут — название и как вернуться */}
+          <span className="min-w-0 flex-1 truncate text-caption">
+            {activeList?.id === onceList.id
+              ? t('lists.progress', { done: listDone, total: onceList.productIds.length })
+              : onceList.name}
+          </span>
+          {activeList?.id === onceList.id ? (
+            <button
+              type="button"
+              onClick={() => closeList(onceList)}
+              className="shrink-0 rounded-full bg-accent-ink/10 px-2.5 py-1 text-micro"
+            >
+              {t('lists.once.close')}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setListFilter(onceList.id)}
+              className="shrink-0 rounded-full bg-accent-ink/10 px-2.5 py-1 text-micro"
+            >
+              {t('lists.once.open')}
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="mb-4">
         <SearchField value={search} onChange={setSearch} placeholder={t('products.search')} />
@@ -391,7 +533,9 @@ export function ProductsScreen() {
       {/* «Все» первым, как у вкладок категорий выше (backlog п. 14) */}
       <div className="mb-4">
         <FilterPills
-          active={statusFilter}
+          // При активном списке ни один фильтр состояния не выбран: внутри
+          // списка видны и купленные, и некупленные позиции (п. 45)
+          active={activeList ? '' : statusFilter}
           onChange={(id) => setStatusFilter(id as Status)}
           items={[
             { id: 'all', label: t('products.filter.all') },
@@ -399,7 +543,51 @@ export function ProductsScreen() {
             { id: 'plan', label: t('products.filter.plan') },
             { id: 'in-stock', label: t('products.filter.inStock') },
           ]}
+          after={(
+            /* Выбор списка покупок — та же пилюля, но со стрелкой: за ней
+               не фильтр, а выбор из нескольких (п. 45) */
+            <button
+              ref={listPillRef}
+              type="button"
+              onClick={() => setListSheetOpen(true)}
+              aria-haspopup="menu"
+              aria-expanded={listSheetOpen}
+              className={cn(
+                'relative flex max-w-[48vw] shrink-0 items-center gap-1 rounded-full px-3 py-1.5 text-micro transition-colors',
+                'before:absolute before:-inset-y-2 before:inset-x-0 before:content-[""]',
+                activeList ? 'bg-accent text-accent-ink' : 'border border-[#242424] text-[#8A8A8A]',
+              )}
+            >
+              {/* Длинное название обрезается, но стрелка видна всегда:
+                  иначе непонятно, что за пилюлей выбор */}
+              <span className="min-w-0 truncate">
+                {activeList ? activeList.name : t('lists.pill')}
+              </span>
+              <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+            </button>
+          )}
+          pinned={(
+            /* «Выключить всё» стояло в меню «⋯» в шапке: нажатие в правом
+               верхнем углу, ответ снизу экрана — связи не видно. Теперь
+               кнопка закреплена прямо над списком (п. 44, выбор Vadym) */
+            <button
+              type="button"
+              onClick={() => {
+                if (turnOffCandidates.length === 0) toast.show(t('products.turnOffAllEmpty'));
+                else setConfirmTurnOff(true);
+              }}
+              aria-label={t('products.turnOffAll')}
+              className="flex h-11 w-11 items-center justify-center rounded-full text-text-muted active:bg-surface"
+            >
+              <PowerOff className="h-[19px] w-[19px]" />
+            </button>
+          )}
         />
+        {activeList && activeList.id !== onceList?.id && (
+          <p className="mt-2 px-0.5 text-micro text-text-dim">
+            {t('lists.progress', { done: listDone, total: activeList.productIds.length })}
+          </p>
+        )}
       </div>
 
       <main className="pb-28">
@@ -445,7 +633,9 @@ export function ProductsScreen() {
       />
 
       {receiptOpen && (
-        <ReceiptImport kitchenId={kitchenId} onClose={() => setReceiptOpen(false)} />
+        <Suspense fallback={null}>
+          <ReceiptImport kitchenId={kitchenId} onClose={() => setReceiptOpen(false)} />
+        </Suspense>
       )}
 
       <AddProductModal
@@ -465,21 +655,6 @@ export function ProductsScreen() {
       />
 
       <ActionSheet
-        open={screenMenuOpen}
-        title={t('products.actions')}
-        note={t('products.turnOffAllHint')}
-        onClose={() => setScreenMenuOpen(false)}
-        actions={[{
-          label: t('products.turnOffAll'),
-          Icon: PowerOff,
-          onClick: () => {
-            if (turnOffCandidates.length === 0) toast.show(t('products.turnOffAllEmpty'));
-            else setConfirmTurnOff(true);
-          },
-        }]}
-      />
-
-      <ActionSheet
         open={confirmTurnOff}
         title={t('products.turnOffAllConfirm', {
           count: turnOffCandidates.length,
@@ -494,6 +669,49 @@ export function ProductsScreen() {
           danger: true,
           onClick: turnOffAll,
         }]}
+      />
+
+      {/* Выбор списка покупок. Дропдаун сделан листом снизу: до верхнего
+          края экрана большим пальцем не дотянуться, а остальные меню
+          приложения открываются так же (п. 45) */}
+      <ActionSheet
+        open={listSheetOpen}
+        title={t('lists.sheetTitle')}
+        note={lists.length > 0 ? t('lists.sheetHint') : t('lists.empty')}
+        onClose={() => setListSheetOpen(false)}
+        actions={[
+          ...(activeList ? [{
+            label: t('lists.allProducts'),
+            Icon: PackageCheck,
+            onClick: () => setListFilter(null),
+          }] : []),
+          ...lists.map((list) => ({
+            label: `${list.name} · ${t('lists.itemsCount', {
+              count: list.productIds.length,
+              noun: plural(list.productIds.length, 'позиция', 'позиции', 'позиций'),
+            })}`,
+            Icon: list.kind === 'once' ? ShoppingBasket : ListChecks,
+            onClick: () => setListFilter(list.id),
+          })),
+          ...(activeList ? [{
+            label: t('lists.edit', { name: activeList.name }),
+            Icon: Pencil,
+            onClick: () => { setEditorFor(activeList); setEditorOpen(true); },
+          }] : []),
+          {
+            label: t('lists.create'),
+            Icon: ListPlus,
+            onClick: () => { setEditorFor(null); setEditorOpen(true); },
+          },
+        ]}
+      />
+
+      <ListEditor
+        kitchenId={kitchenId}
+        open={editorOpen}
+        list={editorFor}
+        onClose={() => setEditorOpen(false)}
+        onSaved={(id) => setListFilter(id || null)}
       />
 
       <ActionSheet
