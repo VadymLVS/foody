@@ -104,10 +104,22 @@ export interface ProductList {
  * «помидоры 1 кг» переписала бы то, сколько помидоров есть дома.
  *
  * Ноль значит «не указано» — как у `products.quantity` (D-030).
+ *
+ * `bought` — отметка этой поездки, из неё считается «Куплено N из M»
+ * (п. 49, миграция 0011). Раньше прогресс считался по `products.in_stock`,
+ * и свежесозданный список открывался наполовину купленным: продукты, которые
+ * дома уже есть, объявлялись купленными сами.
+ *
+ * `stockBefore` — каким было наличие дома, когда позицию внесли в список.
+ * Нужно, чтобы снятие отметки возвращало наличие как было до поездки:
+ * брокколи дома были, лука не было, и «не купил» должно вести себя
+ * по-разному (решение Vadym 10-01).
  */
 export interface ProductListItem {
   productId: string;
   quantity: number;
+  bought: boolean;
+  stockBefore: boolean;
 }
 
 export interface ProductListInput {
@@ -149,6 +161,13 @@ export interface Repo {
    * не открывая форму. Ноль — «не указано» (п. 46).
    */
   setListItemQuantity(listId: string, productId: string, quantity: number): Promise<void>;
+  /**
+   * Отметка «куплено» у позиции (п. 49). Наличие продукта меняет вызывающий:
+   * отметил — продукт дома есть, снял — наличие возвращается к `stockBefore`.
+   * Два запроса, а не один: позиция и продукт живут в разных таблицах,
+   * и объединять их в RPC ради двух полей незачем.
+   */
+  setListItemBought(listId: string, productId: string, bought: boolean): Promise<void>;
   deleteProductList(id: string): Promise<void>;
   /** Поездка закончена: список уходит из выдачи, но остаётся в истории. */
   closeProductList(id: string): Promise<void>;

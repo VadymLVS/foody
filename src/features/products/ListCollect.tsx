@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Eraser, Search } from 'lucide-react';
-import { Modal, useToast } from '@/shared/ui';
+import { Button, Modal, useToast } from '@/shared/ui';
 import { ProductRow } from '@/shared/ui/ProductRow';
 import { useCategories, useProducts } from '@/shared/hooks/useProducts';
 import { searchByName, SEARCH_MIN_LENGTH } from '@/shared/lib/text';
@@ -50,11 +50,24 @@ export function ListCollect({ kitchenId, open, items, onChange, onClose }: Props
 
   const [query, setQuery] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
+  /**
+   * Состав на момент открытия экрана: по нему работает «Отмена».
+   *
+   * Отменяется именно этот заход, а не весь состав: человек открыл сборку,
+   * натыкал лишнего и хочет вернуться к тому, что было, — а не очистить
+   * список (п. 48).
+   */
+  const [opened, setOpened] = useState<ProductListItem[]>([]);
 
   useEffect(() => {
     if (!open) return;
     setQuery('');
     setExpandedId(null);
+    setConfirmClear(false);
+    setOpened(items.map((i) => ({ ...i })));
+    // items в зависимостях стоять не должен: он меняется на каждой отметке,
+    // и снимок «как было при открытии» переписывался бы под руками (D-092)
   }, [open]);
 
   const picked = useMemo(() => new Map(items.map((i) => [i.productId, i.quantity])), [items]);
@@ -73,10 +86,22 @@ export function ListCollect({ kitchenId, open, items, onChange, onClose }: Props
     [searching, visible, categories],
   );
 
+  /*
+   * Новая позиция запоминает, было ли наличие дома на момент внесения
+   * (п. 49): по этому значению снятие отметки «куплено» потом возвращает
+   * наличие как было до поездки.
+   */
+  const fresh = (productId: string, quantity: number): ProductListItem => ({
+    productId,
+    quantity,
+    bought: false,
+    stockBefore: products.find((p) => p.id === productId)?.in_stock ?? false,
+  });
+
   const toggle = (productId: string, next: boolean) => {
     if (next) {
       if (picked.has(productId)) return;
-      onChange([...items, { productId, quantity: 0 }]);
+      onChange([...items, fresh(productId, 0)]);
     } else {
       onChange(items.filter((i) => i.productId !== productId));
       setExpandedId((id) => (id === productId ? null : id));
@@ -93,20 +118,33 @@ export function ListCollect({ kitchenId, open, items, onChange, onClose }: Props
     if (picked.has(productId)) {
       onChange(items.map((i) => (i.productId === productId ? { ...i, quantity } : i)));
     } else {
-      onChange([...items, { productId, quantity }]);
+      onChange([...items, fresh(productId, quantity)]);
     }
   };
 
   /*
-   * «Очистить» снимает всё полностью — и отметки, и количества (решение Vadym
-   * 10-01: «очистить все, полностью»). Половинчатая очистка, которая оставляет
-   * количества у снятых позиций, потом вернулась бы сюрпризом.
+   * «Очистить список» снимает всё полностью — и отметки, и количества
+   * (решение Vadym 10-01: «очистить все, полностью»). Половинчатая очистка,
+   * которая оставляет количества у снятых позиций, потом вернулась бы
+   * сюрпризом.
+   *
+   * От пяти позиций сначала спрашиваем (решение Vadym 10-01). Причина: «Отменить»
+   * в тосте живёт, только пока открыта сборка. Закрыл её и сохранил форму —
+   * и набранное потеряно без возврата. На одну-четыре позиции вопрос был бы
+   * лишним шумом, на десять — единственная защита.
    */
+  const CONFIRM_FROM = 5;
+
   const clear = () => {
     if (items.length === 0) {
       toast.show(t('lists.collect.alreadyEmpty'));
       return;
     }
+    if (items.length >= CONFIRM_FROM && !confirmClear) {
+      setConfirmClear(true);
+      return;
+    }
+    setConfirmClear(false);
     const snapshot = items.map((i) => ({ ...i }));
     onChange([]);
     setExpandedId(null);
@@ -138,7 +176,33 @@ export function ListCollect({ kitchenId, open, items, onChange, onClose }: Props
   };
 
   return (
-    <Modal open={open} title={t('lists.collect.title')} onClose={onClose} tall autoFocus={false}>
+    <Modal
+      open={open}
+      title={t('lists.collect.title')}
+      onClose={onClose}
+      tall
+      autoFocus={false}
+      /*
+       * Без кнопок внизу экран был тупиком: «не понятно что делать после
+       * выбора» (Vadym, 10-01). Я убрал их заодно со ссылкой «Готово» из
+       * панели количества, хотя там это было правильно (подтверждать правку
+       * одного числа нечего), а для экрана целиком — нет: человек отмечает
+       * десяток позиций, это работа, и у работы должен быть видимый конец.
+       *
+       * «Сохранить» здесь не пишем намеренно: список создаёт кнопка формы,
+       * и два «Сохранить» подряд путали бы (решение Vadym 10-01).
+       */
+      footer={(
+        <>
+          <Button variant="secondary" fullWidth onClick={() => { onChange(opened); onClose(); }}>
+            {t('common.cancel')}
+          </Button>
+          <Button fullWidth onClick={onClose}>
+            {t('lists.collect.done', { count: items.length })}
+          </Button>
+        </>
+      )}
+    >
       {/* Шапка и поиск липнут к верху: по списку из сотни позиций прокрутка
           длинная, а «Очистить» и поиск нужны с любого места. Отступы здесь
           плотные намеренно — рабочей зоны должно быть видно как можно больше
@@ -157,6 +221,26 @@ export function ListCollect({ kitchenId, open, items, onChange, onClose }: Props
             {t('lists.collect.clear')}
           </button>
         </div>
+
+        {/* Вопрос стоит прямо под кнопкой, которая его вызвала, а не листом
+            снизу: лист поверх открытого экрана сборки — это два слоя модалок,
+            и человек теряет, к чему относится вопрос */}
+        {confirmClear && (
+          <div className="mb-2 rounded-sm bg-surface-2 p-3">
+            <p className="mb-2.5 text-caption text-text-primary">
+              {t('lists.collect.clearConfirm', { count: items.length })}
+            </p>
+            <div className="flex gap-2">
+              <Button variant="secondary" fullWidth onClick={() => setConfirmClear(false)}>
+                {t('common.cancel')}
+              </Button>
+              <Button variant="danger" fullWidth onClick={clear}>
+                {t('lists.collect.clear')}
+              </Button>
+            </div>
+          </div>
+        )}
+
         <label className="flex items-center gap-2 border-b border-line">
           <Search className="h-4 w-4 shrink-0 text-text-dim" />
           <input

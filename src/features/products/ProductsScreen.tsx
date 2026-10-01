@@ -5,7 +5,8 @@ import {
   PartyPopper, Pencil, Receipt, SearchX, ShoppingBasket, Sparkles, Trash2, UtensilsCrossed,
 } from 'lucide-react';
 import {
-  ActionSheet, BottomNav, Button, EmptyState, FilterPills, ProductRow, SearchField, Tabs,
+  ActionSheet, BottomNav, Button, Dropdown, DropdownItem, DropdownSeparator,
+  EmptyState, FilterPills, ProductRow, SearchField, Tabs,
   useToast, type PlanNeed,
 } from '@/shared/ui';
 import { repo } from '@/shared/api';
@@ -109,6 +110,18 @@ export function ProductsScreen() {
     [lists, listFilter],
   );
 
+  /** В дропдауне только постоянные: к разовому ведёт полоса выше (п. 52). */
+  const regularLists = useMemo(() => lists.filter((l) => l.kind !== 'once'), [lists]);
+
+  /*
+   * Внутри списка вкладка отдела не применяется, поэтому не должна и
+   * выглядеть выбранной: ряд с подсвеченными «Овощами» над списком,
+   * который показан целиком, врал бы в другую сторону (п. 51).
+   */
+  useEffect(() => {
+    if (listFilter && categoryFilter !== 'all') setCategoryFilter('all');
+  }, [listFilter, categoryFilter, setCategoryFilter]);
+
   /**
    * Отмеченное в этом заходе остаётся в списке до смены фильтра.
    * Иначе строка исчезает из-под пальца, и в магазине непонятно,
@@ -189,17 +202,23 @@ export function ProductsScreen() {
   const visible = useMemo(() => {
     if (searchResult) return searchResult.matches;
     let list = products;
-    if (categoryFilter !== 'all') list = list.filter((p) => p.category_id === categoryFilter);
     /*
      * Выбран список покупок — показываем только его позиции, и купленные,
      * и некупленные: по нему идут по залу и отмечают на ходу. Фильтры
      * состояния при этом не применяются, иначе отмеченное исчезало бы
      * из-под пальца (п. 45).
+     *
+     * Вкладка отдела внутри списка тоже не применяется (п. 51). Она
+     * применялась поверх состава, и на вкладке «Овощи» список «Сладкое»
+     * оказывался пустым: «В списке нет позиций», хотя позиций четыре
+     * (Vadym, 10-01). Внутри списка вкладка и не нужна — сам список уже
+     * разложен по отделам.
      */
     if (activeList) {
       const inList = new Set(activeList.items.map((i) => i.productId));
       list = list.filter((p) => inList.has(p.id));
     } else {
+      if (categoryFilter !== 'all') list = list.filter((p) => p.category_id === categoryFilter);
       const kept = (p: Product) => justToggled.has(p.id);
       if (statusFilter === 'plan') list = list.filter((p) => needByProduct.has(p.id) || kept(p));
       if (statusFilter === 'to-buy') list = list.filter((p) => !p.in_stock || kept(p));
@@ -208,12 +227,18 @@ export function ProductsScreen() {
     return [...list].sort((a, b) => a.name.localeCompare(b.name, 'ru'));
   }, [products, categoryFilter, statusFilter, searchResult, needByProduct, justToggled, activeList]);
 
-  /** Сколько позиций списка уже куплено — для подписи и вопроса о закрытии. */
-  const listDone = useMemo(() => {
-    if (!activeList) return 0;
-    const byId = new Map(products.map((p) => [p.id, p]));
-    return activeList.items.filter((i) => byId.get(i.productId)?.in_stock).length;
-  }, [activeList, products]);
+  /**
+   * Сколько позиций списка уже куплено — для подписи и вопроса о закрытии.
+   *
+   * Считается по отметке самой позиции, а не по наличию продукта дома
+   * (п. 49, миграция 0011). Раньше считалось по `in_stock`, и свежесозданный
+   * список открывался наполовину купленным: продукты, которые дома уже есть,
+   * объявлялись купленными сами (Vadym, 10-01).
+   */
+  const listDone = useMemo(
+    () => (activeList ? activeList.items.filter((i) => i.bought).length : 0),
+    [activeList],
+  );
 
   /*
    * Всё куплено — предлагаем закрыть поездку. Тостом, а не окном: закрывать
@@ -300,7 +325,15 @@ export function ProductsScreen() {
    * иначе «Выключить всё» на вкладке «Овощи» звучит как «во всей кухне».
    */
   const turnOffCandidates = useMemo(() => visible.filter((p) => p.in_stock), [visible]);
-  const scopeLabel = searching
+  /*
+   * Область в подтверждении очистки. Случай открытого списка был пропущен:
+   * внутри списка на вкладке «Все» подтверждение говорило «во всей кухне»,
+   * а в работу уходили только позиции списка — число верное, область нет,
+   * и врала она в пугающую сторону (п. 50, находка Vadym 10-01).
+   */
+  const scopeLabel = activeList
+    ? t('products.scope.list', { name: activeList.name })
+    : searching
     ? t('products.scope.found')
     : categoryFilter === 'all'
       ? t('products.scope.all')
@@ -333,10 +366,10 @@ export function ProductsScreen() {
     });
   };
 
-  /** Заявки выбранного списка: «сколько взять», по продукту. */
-  const listQuantities = useMemo(() => {
+  /** Позиции выбранного списка по продукту: заявка, отметка, прежнее наличие. */
+  const listItems = useMemo(() => {
     if (!activeList) return null;
-    return new Map(activeList.items.map((i) => [i.productId, i.quantity]));
+    return new Map(activeList.items.map((i) => [i.productId, i]));
   }, [activeList]);
 
   const renderRow = (product: Product) => (
@@ -351,13 +384,31 @@ export function ProductsScreen() {
        * этом по-прежнему значит наличие: по списку идут и отмечают купленное,
        * из этого же считается «Куплено 3 из 5».
        */
-      listQuantity={listQuantities?.get(product.id)}
+      listQuantity={listItems?.get(product.id)?.quantity}
       hideNeeds={activeList !== null}
       showImage={showImages}
       expanded={activeProductId === product.id}
       // Ползунок только отмечает наличие и панель не раскрывает — иначе в магазине
       // каждая отметка открывала бы панель (решение Vadym, backlog п. 12)
+      checked={listItems ? listItems.get(product.id)?.bought : undefined}
+      toggleLabel={listItems ? 'куплено' : undefined}
       onToggle={(next) => {
+        /*
+         * Внутри списка ползунок отмечает «куплено» этой поездки: отметка
+         * ставит наличие дома, снятие возвращает прежнее, количество не
+         * обнуляется (решение Vadym 10-01, п. 49).
+         */
+        const item = listItems?.get(product.id);
+        if (activeList && item) {
+          listActions.setBought.mutate({
+            listId: activeList.id,
+            productId: product.id,
+            bought: next,
+            stockBefore: item.stockBefore,
+          });
+          remember(product.id);
+          return;
+        }
         // Включение — обычная отметка наличия; выключение сбрасывает
         // количество и предлагает «Отменить» (п. 41)
         if (next) toggleProduct(product.id, true);
@@ -368,7 +419,7 @@ export function ProductsScreen() {
       // Тап по строке открывает и закрывает панель у любого продукта
       onExpand={() => setActiveProduct(activeProductId === product.id ? null : product.id)}
       onQuantityChange={(q) => {
-        if (activeList && listQuantities?.has(product.id)) {
+        if (activeList && listItems?.has(product.id)) {
           listActions.setQuantity.mutate({
             listId: activeList.id, productId: product.id, quantity: q,
           });
@@ -614,10 +665,26 @@ export function ProductsScreen() {
             </button>
           )}
         />
-        {activeList && activeList.id !== onceList?.id && (
-          <p className="mt-2 px-0.5 text-micro text-text-dim">
-            {t('lists.progress', { done: listDone, total: activeList.items.length })}
-          </p>
+        {/* Правка и удаление списка живут здесь, а не в дропдауне: дропдаун —
+            переключатель, и обвешивать каждую его строку вторым органом
+            управления незачем (вариант C, выбор Vadym 10-01). Правишь то, что
+            перед глазами. У разового списка прогресс стоит в полосе выше,
+            поэтому слева здесь пусто. */}
+        {activeList && (
+          <div className="mt-2 flex items-center justify-between px-0.5">
+            <span className="text-micro text-text-dim">
+              {activeList.id === onceList?.id
+                ? ''
+                : t('lists.progress', { done: listDone, total: activeList.items.length })}
+            </span>
+            <button
+              type="button"
+              onClick={() => { setEditorFor(activeList); setEditorOpen(true); }}
+              className="-mr-1 flex h-9 items-center px-1 text-caption text-accent"
+            >
+              {t('lists.editCurrent')}
+            </button>
+          </div>
         )}
       </div>
 
@@ -705,40 +772,65 @@ export function ProductsScreen() {
         }]}
       />
 
-      {/* Выбор списка покупок. Дропдаун сделан листом снизу: до верхнего
-          края экрана большим пальцем не дотянуться, а остальные меню
-          приложения открываются так же (п. 45) */}
-      <ActionSheet
+      {/*
+        Выбор списка покупок — дропдаун от пилюли (п. 52, замечание Vadym 10-01).
+        Раньше это был лист снизу: нажатие в ряду фильтров, ответ у другого края
+        экрана. Нажали на пилюлю — раскрывается пилюля.
+
+        Внутри только переключение и создание. Чего здесь нет, и всё по решению
+        Vadym 10-01:
+        - значков у строк: вид списка уже сказан названием и числом позиций,
+          значок к слову только добавлялся;
+        - «Все продукты»: выход из списка есть рядом, любой пилюлей состояния —
+          «если захочу выйти, нажму Все в табах или купить»;
+        - разового списка: к нему всегда ведёт яркая полоса выше, и строка
+          в дропдауне была дублем. Когда он открыт, дропдаун говорит об этом
+          подписью — иначе набор выглядит так, будто выбор сбросился;
+        - правки и удаления: они внутри открытого списка, ссылкой «Изменить
+          список» под рядом фильтров.
+
+        Нажатие на уже выбранный список просто закрывает панель: делать из
+        строки переключатель «нажал ещё раз — вышел» значит прятать выход
+        в неочевидный жест.
+      */}
+      <Dropdown
         open={listSheetOpen}
-        title={t('lists.sheetTitle')}
-        note={lists.length > 0 ? t('lists.sheetHint') : t('lists.empty')}
+        anchor={listPillRef}
         onClose={() => setListSheetOpen(false)}
-        actions={[
-          ...(activeList ? [{
-            label: t('lists.allProducts'),
-            Icon: PackageCheck,
-            onClick: () => setListFilter(null),
-          }] : []),
-          ...lists.map((list) => ({
-            label: `${list.name} · ${t('lists.itemsCount', {
-              count: list.items.length,
-              noun: plural(list.items.length, 'позиция', 'позиции', 'позиций'),
-            })}`,
-            Icon: list.kind === 'once' ? ShoppingBasket : ListChecks,
-            onClick: () => setListFilter(list.id),
-          })),
-          ...(activeList ? [{
-            label: t('lists.edit', { name: activeList.name }),
-            Icon: Pencil,
-            onClick: () => { setEditorFor(activeList); setEditorOpen(true); },
-          }] : []),
-          {
-            label: t('lists.create'),
-            Icon: ListPlus,
-            onClick: () => { setEditorFor(null); setEditorOpen(true); },
-          },
-        ]}
-      />
+        label={t('lists.sheetTitle')}
+      >
+        {activeList?.kind === 'once' && (
+          <p className="px-4 pb-1 pt-3 text-micro text-text-dim">{t('lists.onceOpenNote')}</p>
+        )}
+
+        {regularLists.length === 0 ? (
+          <p className="px-4 pb-1 pt-3 text-caption text-text-dim">{t('lists.empty')}</p>
+        ) : (
+          regularLists.map((list) => (
+            <DropdownItem
+              key={list.id}
+              label={list.name}
+              note={String(list.items.length)}
+              active={activeList?.id === list.id}
+              onClick={() => {
+                if (activeList?.id !== list.id) setListFilter(list.id);
+                setListSheetOpen(false);
+              }}
+            />
+          ))
+        )}
+
+        <DropdownSeparator />
+        <DropdownItem
+          label={t('lists.create')}
+          tone="accent"
+          onClick={() => {
+            setListSheetOpen(false);
+            setEditorFor(null);
+            setEditorOpen(true);
+          }}
+        />
+      </Dropdown>
 
       <ListEditor
         kitchenId={kitchenId}

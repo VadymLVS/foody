@@ -2,6 +2,7 @@ import { useEffect, useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { repo, qk } from '@/shared/api';
 import type { ProductList, ProductListInput } from '@/shared/api/repo';
+import type { Product } from '@/shared/db/types';
 
 /**
  * Списки покупок (backlog п. 45).
@@ -86,5 +87,54 @@ export function useProductListActions(kitchenId: string) {
     onSuccess: invalidate,
   });
 
-  return { save, remove, close, setQuantity };
+  /*
+   * Отметка «куплено» у позиции списка (п. 49, миграция 0011).
+   *
+   * Решение Vadym (10-01): отметка значит «куплено» и сразу ставит наличие
+   * дома — иначе после магазина пришлось бы отмечать всё второй раз, ради
+   * чего приложение и делалось. Снятие убирает «куплено» и возвращает
+   * наличие к `stockBefore`, то есть к тому, как было до поездки: брокколи
+   * дома были, лука не было, и «не купил» ведёт себя по-разному.
+   *
+   * Количество продукта при снятии не обнуляется, хотя D-075 обнуляет его
+   * при выключении ползунка в обычном списке. Там выключение значит
+   * «кончилось», здесь — «не купил»; обнуление стёрло бы то, сколько
+   * лежало дома до поездки.
+   *
+   * Два запроса подряд, а не RPC: позиция и продукт лежат в разных таблицах,
+   * и заводить функцию ради двух полей незачем. Если второй запрос упадёт,
+   * откатываем оба кэша — расхождение видно сразу, а не после перезагрузки.
+   */
+  const setBought = useMutation({
+    mutationFn: async ({ listId, productId, bought, stockBefore }: {
+      listId: string; productId: string; bought: boolean; stockBefore: boolean;
+    }) => {
+      await repo.setListItemBought(listId, productId, bought);
+      await repo.setInStock([productId], bought ? true : stockBefore);
+    },
+    onMutate: async ({ listId, productId, bought, stockBefore }) => {
+      await queryClient.cancelQueries({ queryKey: qk.lists(kitchenId) });
+      const lists = queryClient.getQueryData<ProductList[]>(qk.lists(kitchenId));
+      const products = queryClient.getQueryData<Product[]>(qk.products(kitchenId));
+      queryClient.setQueryData<ProductList[]>(qk.lists(kitchenId), (old) => (old ?? []).map((l) => (
+        l.id === listId
+          ? { ...l, items: l.items.map((i) => (i.productId === productId ? { ...i, bought } : i)) }
+          : l
+      )));
+      queryClient.setQueryData<Product[]>(qk.products(kitchenId), (old) => (old ?? []).map((p) => (
+        p.id === productId ? { ...p, in_stock: bought ? true : stockBefore } : p
+      )));
+      return { lists, products };
+    },
+    onError: (_e, _v, context) => {
+      if (context?.lists) queryClient.setQueryData(qk.lists(kitchenId), context.lists);
+      if (context?.products) queryClient.setQueryData(qk.products(kitchenId), context.products);
+    },
+    onSuccess: () => {
+      invalidate();
+      void queryClient.invalidateQueries({ queryKey: qk.products(kitchenId) });
+    },
+  });
+
+  return { save, remove, close, setQuantity, setBought };
 }
