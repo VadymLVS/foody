@@ -12,3 +12,4 @@ export { BottomNav } from './BottomNav';
 export { ToastProvider, useToast } from './Toast';
 export { Modal } from './Modal';
 export { ActionSheet, type SheetAction } from './ActionSheet';
+export { Dropdown, DropdownItem, DropdownSeparator } from './Dropdown';

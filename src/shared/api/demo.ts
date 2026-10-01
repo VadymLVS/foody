@@ -150,7 +150,12 @@ state.lists ??= [];
 state.lists = state.lists.map((l) => {
   const legacy = (l as unknown as { productIds?: string[] }).productIds;
   if (l.items) return l;
-  return { ...l, items: (legacy ?? []).map((productId) => ({ productId, quantity: 0 })) };
+  return {
+    ...l,
+    items: (legacy ?? []).map((productId) => ({
+      productId, quantity: 0, bought: false, stockBefore: false,
+    })),
+  };
 });
 
 function persist() {
@@ -334,6 +339,15 @@ export const demoRepo: Repo = {
     persist();
     listListeners.forEach((f) => f());
     return listId;
+  },
+
+  async setListItemBought(listId, productId, bought) {
+    await delay();
+    state.lists = state.lists.map((l) => (l.id === listId
+      ? { ...l, items: l.items.map((i) => (i.productId === productId ? { ...i, bought } : i)) }
+      : l));
+    persist();
+    listListeners.forEach((f) => f());
   },
 
   async setListItemQuantity(listId, productId, quantity) {

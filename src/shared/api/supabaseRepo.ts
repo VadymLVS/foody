@@ -185,14 +185,17 @@ export const supabaseRepo: Repo = {
   async listProductLists(kitchenId) {
     const rows = unwrap(
       await supabase.from('product_lists')
-        .select('id, name, kind, created_by, created_at, product_list_items(product_id, quantity)')
+        .select('id, name, kind, created_by, created_at, product_list_items(product_id, quantity, bought, stock_before)')
         .eq('kitchen_id', kitchenId)
         .is('closed_at', null)
         .order('created_at'),
     ) as unknown as Array<{
       id: string; name: string; kind: 'regular' | 'once';
       created_by: string | null; created_at: string;
-      product_list_items: Array<{ product_id: string; quantity: number | string | null }> | null;
+      product_list_items: Array<{
+        product_id: string; quantity: number | string | null;
+        bought: boolean | null; stock_before: boolean | null;
+      }> | null;
     }>;
     return rows.map<ProductList>((row) => ({
       id: row.id,
@@ -205,6 +208,8 @@ export const supabaseRepo: Repo = {
       items: (row.product_list_items ?? []).map((i) => ({
         productId: i.product_id,
         quantity: Number(i.quantity ?? 0),
+        bought: i.bought ?? false,
+        stockBefore: i.stock_before ?? false,
       })),
     }));
   },
@@ -236,11 +241,21 @@ export const supabaseRepo: Repo = {
           list_id: listId!,
           product_id: item.productId,
           quantity: item.quantity,
+          bought: item.bought,
+          stock_before: item.stockBefore,
         })),
       );
       if (error) throw new Error(error.message);
     }
     return listId;
+  },
+
+  async setListItemBought(listId, productId, bought) {
+    const { error } = await supabase.from('product_list_items')
+      .update({ bought })
+      .eq('list_id', listId)
+      .eq('product_id', productId);
+    if (error) throw new Error(error.message);
   },
 
   async setListItemQuantity(listId, productId, quantity) {

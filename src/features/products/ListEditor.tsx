@@ -102,7 +102,10 @@ export function ListEditor({ kitchenId, open, list, onClose, onSaved }: Props) {
     setFresh((prev) => (prev.some((p) => p.id === product.id) ? prev : [...prev, product]));
     setItems((prev) => (prev.some((i) => i.productId === product.id)
       ? prev
-      : [...prev, { productId: product.id, quantity: 0 }]));
+      // stockBefore — наличие на момент внесения позиции (п. 49)
+      : [...prev, {
+        productId: product.id, quantity: 0, bought: false, stockBefore: product.in_stock,
+      }]));
   };
 
   const commit = () => {
