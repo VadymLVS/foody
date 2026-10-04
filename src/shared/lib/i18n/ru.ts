@@ -311,6 +311,8 @@ export const ru = {
     'products.pickUsual': 'Отметьте то, что покупаете обычно',
 
     'dishes.addFromList': 'Выбрать из списка',
+    'dishes.addToMenu': 'Добавить в меню',
+    'dishes.addedToMenu': '{name} — в меню',
     'dishes.addOwn': 'Своё блюдо',
     'dishes.nothingYet': 'В кухне пока нет блюд',
     'dishes.pickHint': 'Выберите блюда, которые готовите. Нужные продукты добавятся сами',

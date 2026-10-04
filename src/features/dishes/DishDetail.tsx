@@ -17,7 +17,7 @@ import { CookedSheet } from './CookedSheet';
  * действие звалось «Добавить недостающее» и читалось наоборот (U-2).
  */
 export function DishDetail({
-  dish, onClose, onToggleFavorite, onDelete, onCooked, onEdit,
+  dish, onClose, onToggleFavorite, onDelete, onCooked, onEdit, isLibrary = false, onAddToMenu, adding = false,
 }: {
   dish: DishWithStatus;
   onClose: () => void;
@@ -25,6 +25,15 @@ export function DishDetail({
   onToggleFavorite: () => void;
   onDelete: () => void;
   onCooked: (usedUpProductIds: string[]) => void;
+  /**
+   * Блюдо из каталога, ещё не заведённое в кухне (п. 57). Править, отмечать
+   * избранным и удалять пока нечего — в кухне его нет. Всё это появится, как
+   * только блюдо добавят в меню.
+   */
+  isLibrary?: boolean;
+  /** «Добавить в меню» прямо из карточки — для любого блюда не из меню. */
+  onAddToMenu?: () => void;
+  adding?: boolean;
 }) {
   const [cookedOpen, setCookedOpen] = useState(false);
   const kitchenId = useCurrentKitchen()?.id ?? '';
@@ -86,7 +95,7 @@ export function DishDetail({
             className="absolute left-1 top-1 flex h-11 w-11 items-center justify-center text-white">
             <ChevronLeft className="h-5 w-5" />
           </button>
-          <div className="absolute right-1 top-1 flex">
+          {!isLibrary && <div className="absolute right-1 top-1 flex">
             {/* Правка блюда (п. 32) */}
             <button type="button" onClick={onEdit} aria-label={t('dishes.edit')}
               className="flex h-11 w-11 items-center justify-center">
@@ -100,7 +109,7 @@ export function DishDetail({
               className="flex h-11 w-11 items-center justify-center">
               <Trash2 className="h-5 w-5 text-white" />
             </button>
-          </div>
+          </div>}
           <h2 className="font-display absolute bottom-3 left-3.5 text-display text-white">{dish.name}</h2>
         </div>
 
@@ -142,14 +151,19 @@ export function DishDetail({
               <h3 className="mb-2 text-micro text-text-muted">{t('dishes.recipe')}</h3>
               <p className="whitespace-pre-line text-body leading-relaxed text-text-primary">{recipe}</p>
             </section>
-          ) : (
+          ) : !isLibrary && (
             <button type="button" onClick={onEdit} className="mt-4 flex h-11 items-center text-caption text-accent">
               + {t('dishes.recipe.add')}
             </button>
           )}
 
-          <div className="mt-5 flex justify-center gap-2">
-            {dish.missingCount > 0 && (
+          <div className="mt-5 flex flex-wrap justify-center gap-2">
+            {/* Выбрать в меню прямо отсюда: раньше для этого надо было выйти
+                и войти в режим «Составить меню» (п. 57) */}
+            {!dish.isPlanned && onAddToMenu && (
+              <Button onClick={onAddToMenu} loading={adding}>{t('dishes.addToMenu')}</Button>
+            )}
+            {dish.missingCount > 0 && !isLibrary && (
               <Button variant="secondary" onClick={markAll}>{t('dishes.markInStock')}</Button>
             )}
             {/* Единственный выход блюда из плана и единственное место,
