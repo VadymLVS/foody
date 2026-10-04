@@ -28,6 +28,8 @@ const CATEGORIES: Category[] = [
   { id: 'dc-sal',  kitchen_id: DEMO_KITCHEN_ID, kind: 'dish',    key: 'salads',     name: null, sort_order: 30 },
   { id: 'dc-brk',  kitchen_id: DEMO_KITCHEN_ID, kind: 'dish',    key: 'breakfasts', name: null, sort_order: 40 },
   { id: 'dc-bak',  kitchen_id: DEMO_KITCHEN_ID, kind: 'dish',    key: 'baking',     name: null, sort_order: 50 },
+  // Как в сиде 0005: закуски и гарниры справочника лежат в «Прочем»
+  { id: 'dc-oth',  kitchen_id: DEMO_KITCHEN_ID, kind: 'dish',    key: 'other',      name: null, sort_order: 70 },
 ];
 
 // [libraryKey, categoryId, unit, quantity, inStock]

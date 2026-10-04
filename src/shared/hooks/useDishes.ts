@@ -1,3 +1,4 @@
+import { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { repo, qk } from '@/shared/api';
 import type { DishWithStatus, NewDish, NewProduct } from '@/shared/api/repo';
@@ -223,4 +224,96 @@ export function useCreateDish(kitchenId: string) {
       void qc.invalidateQueries({ queryKey: qk.deck(kitchenId) });
     },
   });
+}
+
+/**
+ * Блюдо справочника — в меню одним нажатием из каталога (п. 57).
+ *
+ * Блюдо заводится в кухне вместе с недостающими продуктами и сразу встаёт в меню.
+ * Новые продукты заводятся как «нет дома»: выбранное в меню блюдо — повод
+ * купить, а не утверждение, что всё лежит дома (п. 8). Шага «что из этого уже
+ * есть?», как после карусели, здесь нет: он прерывал бы составление меню на
+ * каждом блюде; наличие отмечается в карточке блюда или в «Купить».
+ *
+ * Нажатия выстраиваются в очередь. Два блюда с общим продуктом, выбранные
+ * подряд, иначе одновременно решили бы, что продукта нет, и завели бы его
+ * дважды. `pending` — блюда, которые ещё заводятся: плитка показывает их
+ * выбранными сразу, не дожидаясь сети (п. 17).
+ */
+export function useAddLibraryToMenu(kitchenId: string, onError: (e: unknown) => void) {
+  const qc = useQueryClient();
+  const chain = useRef<Promise<void>>(Promise.resolve());
+  const [pending, setPending] = useState<Set<string>>(() => new Set());
+  /*
+   * Что завела эта сессия выбора — для «Отмены» (п. 40). Блюдо справочника
+   * заводится в кухне вместе с продуктами, и «Отмена» обязана убрать и то, и
+   * другое: иначе блюдо осталось бы в меню, а его продукты — в «Купить».
+   * Записываем только между `startSession` и `endSession`/`undoSession`:
+   * добавление из карточки блюда — отдельное действие, его «Отмена» не трогает.
+   */
+  const session = useRef<{ active: boolean; dishIds: string[]; productIds: string[] }>({
+    active: false, dishIds: [], productIds: [],
+  });
+
+  const refresh = () => Promise.all([
+    qc.invalidateQueries({ queryKey: qk.dishes(kitchenId) }),
+    qc.invalidateQueries({ queryKey: qk.products(kitchenId) }),
+    qc.invalidateQueries({ queryKey: qk.planNeeds(kitchenId) }),
+    qc.invalidateQueries({ queryKey: qk.planned(kitchenId) }),
+    qc.invalidateQueries({ queryKey: qk.deck(kitchenId) }),
+  ]);
+
+  const done = (key: string) => setPending((prev) => {
+    const next = new Set(prev);
+    next.delete(key);
+    return next;
+  });
+
+  const addToMenu = (key: string) => {
+    if (pending.has(key)) return;
+    setPending((prev) => new Set(prev).add(key));
+    const recording = session.current.active;
+    chain.current = chain.current
+      .then(async () => {
+        const { created, dishIdByKey } = await ensureLibraryItems(kitchenId, { dishKeys: [key], productKeys: [] });
+        const id = dishIdByKey.get(key);
+        if (id) await repo.addToPlan(kitchenId, id);
+        if (recording && session.current.active) {
+          if (id) session.current.dishIds.push(id);
+          session.current.productIds.push(...created.map((p) => p.id));
+        }
+        // Метку снимаем только после того, как пришёл свежий список блюд:
+        // иначе плитка на мгновение мигнула бы невыбранной
+        await refresh();
+      })
+      .catch(onError)
+      .finally(() => done(key));
+  };
+
+  const startSession = () => {
+    session.current = { active: true, dishIds: [], productIds: [] };
+  };
+  const endSession = () => {
+    session.current = { active: false, dishIds: [], productIds: [] };
+  };
+
+  /**
+   * Отменить всё, что завела сессия: дождаться заводимого, снять из меню,
+   * убрать блюда и созданные ими продукты. Удаление мягкое, как везде.
+   * Возвращает id убранных блюд — вызывающему не нужно снимать их второй раз.
+   */
+  const undoSession = async (): Promise<string[]> => {
+    await chain.current;
+    const { dishIds, productIds } = session.current;
+    endSession();
+    for (const id of dishIds) {
+      await repo.removeFromPlan(kitchenId, id);
+      await repo.deleteDish(id);
+    }
+    for (const id of productIds) await repo.softDeleteProduct(id);
+    if (dishIds.length > 0 || productIds.length > 0) await refresh();
+    return dishIds;
+  };
+
+  return { addToMenu, pending, startSession, endSession, undoSession, settled: () => chain.current };
 }

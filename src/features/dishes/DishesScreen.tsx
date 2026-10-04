@@ -2,14 +2,16 @@ import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Soup, Salad, EggFried, CakeSlice, UtensilsCrossed, LayoutGrid, GalleryHorizontalEnd,
-  ListChecks, ChefHat, Sparkles, Layers, X, Eraser, BookmarkPlus,
+  ListChecks, ChefHat, Sparkles, Layers, X, Eraser, BookmarkPlus, Sandwich,
 } from 'lucide-react';
 import {
   ActionSheet, Button, DishTile, EmptyState, FilterPills, SearchField, Tabs, useToast, BottomNav,
 } from '@/shared/ui';
 import { useCurrentKitchen } from '@/shared/hooks/useKitchens';
-import { useDishes, usePlanActions } from '@/shared/hooks/useDishes';
-import { useCategories, useToggleProduct } from '@/shared/hooks/useProducts';
+import { useAddLibraryToMenu, useDishes, usePlanActions } from '@/shared/hooks/useDishes';
+import { useCategories, useProducts, useToggleProduct } from '@/shared/hooks/useProducts';
+import { useForbidden } from '@/shared/hooks/useDiet';
+import { buildCatalog, libraryKeyOf, type CatalogDish } from '@/shared/lib/dishCatalog';
 import { plural, searchByName } from '@/shared/lib/text';
 import { categoryLabel, t } from '@/shared/lib/i18n';
 import { cn } from '@/shared/lib/cn';
@@ -41,6 +43,7 @@ const CATEGORY_ICON: Record<string, React.ReactNode> = {
   breakfasts: <EggFried className="h-6 w-6 text-[#3E3E3E]" />,
   baking: <CakeSlice className="h-6 w-6 text-[#3E3E3E]" />,
   mains: <UtensilsCrossed className="h-6 w-6 text-[#3E3E3E]" />,
+  other: <Sandwich className="h-6 w-6 text-[#3E3E3E]" />,
 };
 
 export function DishesScreen() {
@@ -51,8 +54,23 @@ export function DishesScreen() {
 
   const { data: dishes = [], isLoading } = useDishes(kitchenId);
   const { data: categories = [] } = useCategories(kitchenId);
+  const { data: products = [] } = useProducts(kitchenId);
+  const forbidden = useForbidden();
   const { add, remove, favorite, removeDish, restoreDish } = usePlanActions(kitchenId);
   const toggleProduct = useToggleProduct(kitchenId);
+  const { addToMenu, pending, startSession, endSession, undoSession } = useAddLibraryToMenu(kitchenId, (e) =>
+    toast.show(t('products.saveFailed', { reason: e instanceof Error ? e.message : '' })));
+
+  /*
+   * Каталог: блюда кухни и весь справочник, подходящий по питанию (п. 57).
+   * Справочник раньше был виден только через карусель — а карусель для того,
+   * кто не знает, чего хочет. Выбирающему конкретное нужна вся витрина
+   * плитками (Vadym, 10-04). Карусель осталась в «+».
+   */
+  const catalog = useMemo(
+    () => buildCatalog({ kitchenId, dishes, products, categories, forbidden }),
+    [kitchenId, dishes, products, categories, forbidden],
+  );
 
   // ?tab=planned — сюда ведут «Готово» из карусели и из режима выбора (п. 19–20)
   const [params] = useSearchParams();
@@ -73,7 +91,18 @@ export function DishesScreen() {
   const [search, setSearch] = useState('');
   // Храним id, а блюдо берём из свежего списка: после правки карточка сразу показывает новое
   const [detailId, setDetailId] = useState<string | null>(null);
-  const detail = dishes.find((d) => d.id === detailId) ?? null;
+  /*
+   * Блюдо справочника, добавленное в меню из своей карточки, становится
+   * настоящим и меняет id. Ищем его по ключу справочника — иначе карточка
+   * закрылась бы прямо под пальцем.
+   */
+  const detail = useMemo(() => {
+    if (!detailId) return null;
+    const direct = catalog.find((d) => d.id === detailId);
+    if (direct) return direct;
+    const key = libraryKeyOf(detailId);
+    return key ? catalog.find((d) => d.library_key === key) ?? null : null;
+  }, [catalog, detailId]);
   const setDetail = (d: DishWithStatus | null) => setDetailId(d?.id ?? null);
   const [editDish, setEditDish] = useState<DishWithStatus | null>(null);
   // «Выбрать блюда» из пустого фильтра «Для плана» открывает сразу режим выбора
@@ -172,7 +201,7 @@ export function DishesScreen() {
   };
 
   const dishCategories = useMemo(() => categories.filter((c) => c.kind === 'dish'), [categories]);
-  const readyCount = dishes.filter((d) => d.missingCount === 0).length;
+  const readyCount = catalog.filter((d) => d.missingCount === 0).length;
   const plannedCount = dishes.filter((d) => d.isPlanned).length;
 
   /**
@@ -194,44 +223,65 @@ export function DishesScreen() {
     return parts.length > 0 ? t('sets.clearConfirm', { count: parts.join(' и ') }) : '';
   }, [plannedCount, activeSets.length]);
 
-  const iconFor = (dish: DishWithStatus) => {
+  const iconFor = (dish: CatalogDish) => {
     const category = dishCategories.find((c) => c.id === dish.category_id);
     return (category?.key && CATEGORY_ICON[category.key]) ?? undefined;
   };
 
   const visible = useMemo(() => {
-    let list = dishes;
+    let list = catalog;
     if (category !== 'all') list = list.filter((d) => d.category_id === category);
     if (status === 'planned') list = list.filter((d) => d.isPlanned);
     else if (status === 'ready') list = list.filter((d) => d.missingCount === 0);
     else if (status === 'fav') list = list.filter((d) => d.isFavorite);
     return searchByName(list, search);
-  }, [dishes, category, status, search]);
+  }, [catalog, category, status, search]);
 
   /*
    * Меню на момент входа в режим выбора — для «Отмены» (п. 40): передумал —
    * одно нажатие возвращает как было, а не снятие галочек по одной.
    */
   const [menuBefore, setMenuBefore] = useState<Set<string> | null>(null);
+  const [cancelling, setCancelling] = useState(false);
   const cancelSelecting = () => {
-    if (menuBefore) {
-      for (const dish of dishes) {
-        if (dish.isPlanned && !menuBefore.has(dish.id)) remove.mutate(dish.id);
-        else if (!dish.isPlanned && menuBefore.has(dish.id)) add.mutate(dish.id);
+    const before = menuBefore;
+    setCancelling(true);
+    /*
+     * Блюда справочника, выбранные в этом заходе, заводились в кухне вместе
+     * с продуктами — «Отмена» убирает и их, а не только снимает из меню.
+     * Сначала она дожидается тех, что ещё заводятся: без этого блюдо,
+     * нажатое за секунду до «Отмены», вставало бы в меню уже после неё.
+     */
+    /*
+     * Из режима выбора выходим, только когда всё убрано: пока блюда
+     * справочника дозаводятся, счётчик «В меню» показал бы промежуточное
+     * число. Кнопка «Отмена» на это время показывает загрузку.
+     */
+    void undoSession().then((undone) => {
+      if (before) {
+        const skip = new Set(undone);
+        for (const dish of dishes) {
+          if (skip.has(dish.id)) continue;
+          if (dish.isPlanned && !before.has(dish.id)) remove.mutate(dish.id);
+          else if (!dish.isPlanned && before.has(dish.id)) add.mutate(dish.id);
+        }
       }
-    }
-    setMenuBefore(null);
-    setSelecting(false);
+      setMenuBefore(null);
+      setSelecting(false);
+      setCancelling(false);
+    });
   };
 
   // Выбирают из всех блюд: в фильтре «В меню» снятая плитка исчезала бы из-под пальца
   const startSelecting = () => {
+    startSession();
     setMenuBefore(new Set(dishes.filter((d) => d.isPlanned).map((d) => d.id)));
     setSelecting(true);
     setMode('dishes');
     if (status === 'planned') setStatus('all');
   };
   const finishSelecting = () => {
+    endSession();
     setMenuBefore(null);
     setSelecting(false);
     showPlanned();
@@ -239,7 +289,7 @@ export function DishesScreen() {
 
   // Раскладка по двум столбцам: оценка высоты по пропорции снимка, без снимка — 104px на ~200px ширины
   const masonry = useMemo(() => {
-    const cols: [DishWithStatus[], DishWithStatus[]] = [[], []];
+    const cols: [CatalogDish[], CatalogDish[]] = [[], []];
     let left = 0;
     let right = 0;
     for (const dish of visible) {
@@ -249,12 +299,15 @@ export function DishesScreen() {
     return cols;
   }, [visible]);
 
-  const renderTile = (dish: DishWithStatus) => (
+  const isPending = (dish: CatalogDish) => Boolean(dish.library_key && pending.has(dish.library_key));
+
+  const renderTile = (dish: CatalogDish) => (
     <DishTile
       key={dish.id}
       selectable={selecting}
-      // Медаль — только в режиме выбора; в обычном просмотре меню живёт в своём фильтре
-      selected={selecting && dish.isPlanned}
+      // Медаль — только в режиме выбора; в обычном просмотре меню живёт в своём фильтре.
+      // Блюдо справочника, которое ещё заводится, показывается выбранным сразу (п. 17)
+      selected={selecting && (dish.isPlanned || isPending(dish))}
       onClick={() => (selecting ? togglePlan(dish) : setDetail(dish))}
       dish={{
         id: dish.id,
@@ -268,7 +321,12 @@ export function DishesScreen() {
     />
   );
 
-  const togglePlan = (dish: DishWithStatus) => {
+  const togglePlan = (dish: CatalogDish) => {
+    // Блюдо справочника сначала заводится в кухне, потом встаёт в меню
+    if (dish.isLibrary) {
+      if (dish.library_key) addToMenu(dish.library_key);
+      return;
+    }
     if (dish.isPlanned) remove.mutate(dish.id);
     else add.mutate(dish.id);
   };
@@ -442,7 +500,7 @@ export function DishesScreen() {
         )}
 
         {/* Пустой раздел зовёт к действию: карусель — основной путь (backlog п. 4) */}
-        {!isLoading && !isSets && dishes.length === 0 && (
+        {!isLoading && !isSets && catalog.length === 0 && (
           <EmptyState
             icon={<Sparkles className="h-12 w-12" />}
             title={t('dishes.nothingYet')}
@@ -458,7 +516,7 @@ export function DishesScreen() {
           />
         )}
 
-        {!isLoading && !isSets && dishes.length > 0 && visible.length === 0 && (
+        {!isLoading && !isSets && catalog.length > 0 && visible.length === 0 && (
           isPlannedView && category === 'all' && !search ? (
             activeSets.length > 0 ? null : (
             <EmptyState
@@ -501,11 +559,11 @@ export function DishesScreen() {
           className="fixed inset-x-0 z-30 flex justify-center gap-2"
           style={{ bottom: 'calc(6rem + env(safe-area-inset-bottom))' }}
         >
-          <Button variant="secondary" className="bg-black/80 backdrop-blur-md" onClick={cancelSelecting}>
+          <Button variant="secondary" className="bg-black/80 backdrop-blur-md" onClick={cancelSelecting} loading={cancelling}>
             {t('dishes.cancelSelecting')}
           </Button>
           <Button onClick={finishSelecting}>
-            {t('dishes.doneSelecting', { count: plannedCount })}
+            {t('dishes.doneSelecting', { count: plannedCount + pending.size })}
           </Button>
         </div>
       )}
@@ -572,6 +630,16 @@ export function DishesScreen() {
       {detail && !editDish && (
         <DishDetail
           dish={detail}
+          isLibrary={detail.isLibrary}
+          adding={isPending(detail)}
+          onAddToMenu={() => {
+            if (detail.isLibrary) {
+              if (detail.library_key) addToMenu(detail.library_key);
+            } else {
+              add.mutate(detail.id);
+            }
+            toast.show(t('dishes.addedToMenu', { name: detail.name }));
+          }}
           onClose={() => setDetail(null)}
           onEdit={() => setEditDish(detail)}
           onToggleFavorite={() => favorite.mutate({ id: detail.id, next: !detail.isFavorite })}
