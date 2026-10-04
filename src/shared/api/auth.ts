@@ -9,7 +9,15 @@ export interface Session {
 export interface AuthApi {
   getSession(): Promise<Session | null>;
   onChange(callback: (session: Session | null) => void): () => void;
-  signUp(email: string, password: string, fullName: string): Promise<void>;
+  /**
+   * Регистрация. `needsConfirmation` — сессии нет, потому что в Supabase
+   * включено подтверждение почты: письмо отправлено, войти пока нельзя
+   * (backlog п. 53). Раньше этот случай не различался вовсе, и человек после
+   * «Продолжить» молча возвращался на приветственный экран.
+   */
+  signUp(email: string, password: string, fullName: string): Promise<{ needsConfirmation: boolean }>;
+  /** Повторить письмо с подтверждением. */
+  resendConfirmation(email: string): Promise<void>;
   signIn(email: string, password: string): Promise<void>;
   signOut(): Promise<void>;
   /** App Store 5.1.1(v) — удаление аккаунта обязано быть внутри приложения (D-018). */
@@ -76,10 +84,27 @@ const supabaseAuth: AuthApi = {
   },
 
   async signUp(email, password, fullName) {
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      options: { data: { full_name: fullName } },
+      options: {
+        data: { full_name: fullName },
+        // Ссылка из письма ведёт туда, откуда человек регистрировался, а не на
+        // Site URL из настроек проекта: если там остался адрес разработки,
+        // человек подтвердил бы почту и оказался в никуда. Адрес должен быть
+        // в Redirect URLs проекта — иначе Supabase сам откатится к Site URL.
+        emailRedirectTo: window.location.origin,
+      },
+    });
+    if (error) throw new Error(error.message);
+    return { needsConfirmation: !data.session };
+  },
+
+  async resendConfirmation(email) {
+    const { error } = await supabase.auth.resend({
+      type: 'signup',
+      email,
+      options: { emailRedirectTo: window.location.origin },
     });
     if (error) throw new Error(error.message);
   },
@@ -139,6 +164,11 @@ const demoAuth: AuthApi = {
 
   async signUp(email, _password, fullName) {
     writeDemoSession({ userId: 'demo-user', email, fullName: fullName || email.split('@')[0]! });
+    return { needsConfirmation: false };
+  },
+
+  async resendConfirmation() {
+    // В демо писем нет
   },
 
   async signIn(email) {

@@ -58,6 +58,11 @@ export const PRODUCT_GROUPS: Record<string, DietGroup[]> = {
   nuts: ['nuts'], peanut_butter: ['nuts'],
   eggs: ['eggs'], mayonnaise: ['eggs'],
   honey: ['honey'],
+  // Для блюд справочника v0.20: без группы фалафель с лавашом прошёл бы
+  // в «без глютена», а киш на слоёном тесте — в «без молочного»
+  cod: ['fish'], hake: ['fish'], mussels: ['seafood'],
+  ricotta: ['dairy'], pesto: ['dairy', 'nuts'],
+  tortilla: ['gluten'], puff_pastry: ['gluten', 'dairy'],
 };
 
 export function forbiddenGroups(profile: DietProfile | null | undefined): Set<DietGroup> {

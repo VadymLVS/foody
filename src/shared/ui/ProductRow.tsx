@@ -2,6 +2,7 @@ import { useRef } from 'react';
 import { MoreHorizontal } from 'lucide-react';
 import type { Product } from '@/shared/db/types';
 import { formatNumber } from '@/shared/lib/text';
+import { needSummary } from '@/shared/lib/needSummary';
 import { unitLabel } from '@/shared/lib/i18n';
 import { Toggle } from './Toggle';
 import { cn } from '@/shared/lib/cn';
@@ -171,24 +172,25 @@ export function ProductRow({
               </span>
             )}
           </span>
-          {/* Количество стоит у блюда, а не у названия: рядом с продуктом
-              оно читается как «столько есть», а не «столько нужно» */}
-          {hasNeed && need && (
-            <span className="truncate text-micro text-text-muted">
-              {need.dishes.slice(0, 2).map((d, i) => (
-                <span key={`${d.dish}-${i}`}>
-                  {i > 0 && ' · '}
-                  {d.dish}{d.owner ? ` — ${d.owner}` : ''}
-                  {d.quantity != null && (
+          {/* Строка блюд — итогом: «3 блюда · 1,3 кг» (п. 54, D-103). Перечень
+              блюд с количествами тянулся во всю ширину и ложился на картинку,
+              где не читался. Какие именно блюда — в панели по тапу ниже */}
+          {hasNeed && need && (() => {
+            const summary = needSummary(need);
+            return (
+              <span className="truncate text-micro text-text-muted">
+                {summary.dishes}
+                {summary.quantity && (
+                  <>
+                    {' · '}
                     <span className="text-accent">
-                      {' '}{formatNumber(d.quantity)} {unitLabel(product.unit)}
+                      {summary.quantity} {unitLabel(product.unit)}
                     </span>
-                  )}
-                </span>
-              ))}
-              {need.dishes.length > 2 && ` и ещё ${need.dishes.length - 2}`}
-            </span>
-          )}
+                  </>
+                )}
+              </span>
+            );
+          })()}
         </span>
 
         {/* Ползунок не должен ни раскрывать панель, ни запускать долгое нажатие */}
